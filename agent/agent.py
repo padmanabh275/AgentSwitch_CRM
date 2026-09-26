@@ -91,7 +91,8 @@ def run(query: str, session_id: str, client: MCPClient) -> tuple[str, dict]:
                 try:
                     result = fn(tc.get("arguments", {}))
                 except Exception as e:  # a tool call this seat is allowed to make still failed
-                    result = {"outcome": "error", "reason": str(e)}
+                    result = {"outcome": "error", "error_code": getattr(e, "code", None),
+                              "reason": str(e)}
             if name in ("list_closing_this_month", "list_at_risk"):
                 collected[{"list_closing_this_month": "closing_this_month",
                            "list_at_risk": "at_risk"}[name]] = result

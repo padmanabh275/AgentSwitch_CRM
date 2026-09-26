@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from domain.escalation import file_escalation
-from transport.mcp_client import MCPClient, MCPToolError
+from transport.mcp_client import NOT_FOUND, MCPClient, MCPToolError
 
 
 def _sales_price(item: dict) -> float:
@@ -29,7 +29,9 @@ def attempt_quote(client: MCPClient, session_id: str, item_id: str, qty: int) ->
     """
     try:
         item = client.call("Item.get", {"id": item_id})
-    except MCPToolError:
+    except MCPToolError as e:
+        if e.code != NOT_FOUND:
+            raise
         return {"outcome": "refused", "requested_qty": qty, "item_id": item_id,
                 "reason": f"item {item_id} does not exist — nothing to quote"}
 

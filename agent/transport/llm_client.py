@@ -53,6 +53,9 @@ def call_llm(messages: list[dict], tools: list[dict] | None = None,
         raw = urllib.request.urlopen(req, timeout=120).read()
     except urllib.error.HTTPError as e:
         raise LLMError(f"glc_v5 HTTP {e.code}: {e.read()[:500]!r}")
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
         raise LLMError(f"glc_v5 unreachable at {GLC_URL} — is `uv run glc serve` running? ({e})")
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise LLMError(f"glc_v5 returned non-JSON: {raw[:200]!r}")
