@@ -83,10 +83,18 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
   eyeball a partial page and report a total as if complete.
 - **BOM wall is real and total, not a 403**: no `BOM.*` tool exists anywhere in
   the live 242-tool list. `Item` records carry `default_bom_id`/`design_bom_id`
-  (bare unresolvable UUIDs) and `is_manufactured`/`routing_id`. Sales-visible
-  price fields on Item (`default_rate`, `selling_price`, `standard_rate`,
-  `purchase_rate`, `mrp`) are all `0.0` on real sampled data anyway — no fallback
-  price exists even if we wanted to fudge one (we won't).
+  (bare unresolvable UUIDs) and `is_manufactured`/`routing_id`.
+  - ~~Sales-visible price fields are all `0.0` on real sampled data~~ —
+    **wrong beyond that sample.** A full read on 2026-09-26: **94 of 103 items**
+    have a non-zero price field (`default_rate` 87, `purchase_rate` 88,
+    `selling_price` 42, `mrp` 40, `standard_rate` 27); 69 have a
+    `default_bom_id`. E.g. SuryaTools Bench Vice 150mm (`ST-VICE-150`,
+    manufactured, has a BOM): `default_rate`/`selling_price` 5799, `mrp` 6999,
+    `purchase_rate` 3189.45. So for most items the agent *quotes* a list price
+    rather than escalating — see `TO_REVISIT.md` #3. `purchase_rate` is a
+    cost and is never quoted.
+  - `Item.list`'s `search` matches name and code, case-insensitively
+    ("bench vice" → 2 items, "ASP-H-011" → 1).
 - Escalation mechanism: `AgentEscalation.create` (requires `session_id`, `reason`;
   optional `reason_code` enum, `subject`, `party_id`). Assignee confirmed via
   `GET /api/agent-governance/escalations/assignees` — the only entry is
@@ -176,10 +184,16 @@ and S18's harness pattern:
   platform write; `graph.json` beside it holds every node's output.
 - The LLM tool loop is kept as `run.py --chat` for free-form questions, still
   behind the curated menu below.
-- Roadmap: Phase 2 (LLM request parsing, item lookup by name, checking the
-  prose against the finding), Phase 3 (wait for escalation replies and
-  resume, an LLM planner limited to the registry, a richer at-risk rule). See
-  `README.md` → Status.
+- **Phase 2 (2026-09-26):** a free-text question is classified by the LLM
+  (`llm/intent.py`, JSON schema via glc_v5's `response_format`) and validated
+  in code — no default quantity, unknown asks dropped. Standard questions and
+  out-of-scope refusals go to the graph; other in-scope requests go to the
+  chat loop. `resolve_item` finds items by id/code/name and refuses on no or
+  ambiguous matches. `llm/verify.py` checks every answer against the finding
+  (ids, escalation numbers, amounts within ₹1, required facts); one rewrite,
+  then the template. `RulePlanner` re-reads an incomplete snapshot once.
+- Roadmap: Phase 3 (wait for escalation replies and resume, an LLM planner
+  limited to the registry, a richer at-risk rule). See `README.md` → Status.
 
 **Original design (2026-09-2x), still the basis of the `--chat` path:**
 
@@ -269,6 +283,11 @@ and S18's harness pattern:
     cost); `number`, `status`, `assignee`, `reused_existing` when escalated;
     `dry_run` and `would_file` under `--dry-run`. `outcome: "refused"` also
     covers "no item specified" and a non-positive quantity.
+  - **Phase 2:** `quote.outcome: "refused"` also covers an unstated quantity,
+    no matching item, and an ambiguous item (with `candidates`); resolved
+    quotes carry `item_name`, `item_code`, `query`, `matched_by`. Top level
+    gains `refusals` (out-of-scope parts, each `{outcome, request, reason}`)
+    and `not_handled` (`{request, reason}` or null) — always present.
   - Top level: `run_id`, `session_id`, `dry_run`. `generated_at` is the local
     clock in IST — still no server-clock source.
 
@@ -280,6 +299,10 @@ and S18's harness pattern:
   against live Suryodaya data in dry runs (graph path and the `--chat`
   refusal) and offline with fake clients. **The path that writes to the
   platform (session, escalation, memory) has not been run yet.**
+- **2026-09-26 — Phase 2 done:** free-text routing, item lookup by name,
+  prose verification, out-of-scope refusals, snapshot re-read. Live dry runs:
+  the composite question by item name, a mixed question (quote without a
+  quantity refused, commission refused), and a deal lookup routed to chat.
 - Earlier checklist items (finding schema, pure-refuse example, E1/E2 filing,
   README) are all done — see git history for the old list.
 - Next: Phase 2/3 per `README.md` → Status; open decisions in `TO_REVISIT.md`.

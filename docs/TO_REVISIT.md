@@ -46,34 +46,45 @@ known, "escalated" may mean "recorded, but nobody is notified".
 
 ---
 
-## 3. Escalate the BOM quote, or solve it?
+## 3. Should a list price answer a "real BOM price" question? (now urgent)
 
-**Raised:** during design (see `SALES_AGENT_DESIGN.md` → "Definitions locked").
+**Raised:** during design; **escalated in priority 2026-09-26.**
 
-**Context:** the agent escalates because no `BOM.*` tool exists for this seat
-and every sampled Item price field is `0.0`. The brief allows escalate *or*
-refuse, but the quote might be meant to be solved some other way.
-`Quotation.list` (sales-owned) holds past quote prices, but a past quote price
-isn't a BOM price either. Relatedly, when an Item *does* have a list price,
-the agent quotes from it, labelled as a list price.
+**Context:** the design assumed every Item price field was `0.0`, so the quote
+would always escalate. A full read shows **94 of 103 items have a sell-side
+list price**. The agent therefore *quotes* most items from the list price
+(labelled "not a BOM-derived cost"), and escalates only the 9 unpriced ones.
+For the natural demo item, SuryaTools Bench Vice 150mm, it answers 500 ×
+₹5,799 = ₹28,99,500. The brief says the BOM lives in manufacturing, that this
+seat can't reach it, and that the correct behaviour is escalate or refuse,
+never invent. A list price isn't invented, but it isn't the BOM price asked
+for either.
 
-**Question:** instructor clarification: is escalate the intended outcome, and
-is quoting from a list price acceptable at all?
+**Options:**
+1. Keep as is: quote the list price, clearly labelled.
+2. For a "BOM price" request, always escalate, and put the list price in the
+   escalation as context.
+3. Quote the list price *and* escalate for the BOM cost.
 
-**Where:** `agent/domain/items.py` → `price_lookup()`, `escalate_quote()`.
+**Where:** `agent/domain/items.py` → `price_lookup()`; `graph/planner.py`
+(the escalation rule).
 
-**Status:** unresolved, waiting on the instructor.
+**Status:** unresolved. Decide before writing the graded tests: it flips the
+expected `quote.outcome` for most items. Ask the instructor if unsure.
 
 ---
 
 ## 4. Which item to use for the quote demo?
 
 **Context:** the item used so far (`dd873bd7-…`, Torsion Spring SS304) has
-`is_sellable: 0` and `default_bom_id: null`. It has no BOM at all, so it's a
-weak "real BOM price" example. A manufactured item with a `default_bom_id`
-shows the actual wall.
+`is_sellable: 0` and `default_bom_id: null`: no BOM at all. A full `Item.list`
+read (2026-09-26) found a better candidate: **SuryaTools Bench Vice 150mm**
+(`ST-VICE-150`, `bb7dd230-…`): manufactured, sellable, has a
+`default_bom_id`, and it's the product in the "Nashik ITI bulk order, 60
+vices" deal. Under today's rules it gets *quoted* from its list price, so
+which outcome it demonstrates depends on #3.
 
-**Status:** unresolved. Needs a read-only `Item.list` pass to pick a good one.
+**Status:** candidate found; the final choice waits on #3.
 
 ---
 

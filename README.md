@@ -16,16 +16,25 @@ uv sync                                   # Python >=3.10; the agent itself is s
 printf 'EMAIL=...\nSURYODAYA_PW=...\n' > agent/.env   # your seat login (gitignored)
 (cd path/to/glc_v5 && uv run glc serve &) # LLM gateway, port 8111 — see below
 
-uv run python agent/run.py --item-id <Item.id> --qty 500 --dry-run
+uv run python agent/run.py "What closes this month, what's at risk, and quote 500 SuryaTools Bench Vice 150mm?" --dry-run
+uv run python agent/run.py --item ST-VICE-150 --qty 500 --dry-run        # same, without LLM classification
 ```
+
+A free-text question is classified by the LLM (`llm/intent.py`) into the three
+standard questions, the item and quantity as written, out-of-scope parts, and
+anything else. The first three go to the task graph; out-of-scope parts are
+refused there; any other in-scope request goes to the chat loop. Running with
+flags only skips the classification, which makes it the reproducible path for
+grading.
 
 | Flag | Effect |
 |---|---|
-| `--item-id ID`, `--qty N` | The item and quantity to quote. Without `--item-id` the quote is refused ("which item?"). |
+| `"question"` | Free-text question, classified and routed as above. |
+| `--item ITEM`, `--qty N` | Flags path: the item to quote (id, code or name; `--item-id` is an alias) and quantity (default 500). Without `--item` the quote is refused ("which item?"). |
 | `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three). |
 | `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
-| `--chat "question"` | Free-form question through the LLM tool loop instead of the graph. |
+| `--chat "question"` | Straight to the LLM tool loop, skipping classification. |
 
 Every run writes `runs/<run_id>/taskrun.json` (steps, finding, answer, warnings)
 and, for the graph path, `runs/<run_id>/graph.json` (every node's full output,
@@ -41,8 +50,9 @@ can't run without it.
 
 ```
                  run.py
+              │  a free-text question is first classified (llm/intent.py)
        ┌───────────┴───────────┐
-   graph path (default)     --chat
+   graph path                chat path (or --chat)
        │                       │
   graph/ (task graph)     llm/chat_loop.py (LLM picks tools from llm/tools.py)
        │                       │
@@ -53,10 +63,11 @@ The composite question runs as a small task graph. Only the asked-for branches
 are built:
 
 ```
-snapshot_deals ─┬─ closing_this_month ─┐
-                └─ at_risk ────────────┤
-get_item ── price_lookup ──(+ escalate_quote)─┤
-                                 build_finding ── narrate
+snapshot_deals (+ reread_deals) ─┬─ closing_this_month ─┐
+                                 └─ at_risk ────────────┤
+resolve_item ── price_lookup ──(+ escalate_quote)───────┤
+refuse_1..n (out-of-scope parts) ───────────────────────┤
+                                         build_finding ── narrate (verified)
 ```
 
 - **The finding is computed in code, not by the LLM.** `build_finding` assembles
@@ -66,8 +77,14 @@ get_item ── price_lookup ──(+ escalate_quote)─┤
 - **One failed branch doesn't sink the others.** `build_finding` runs once every
   branch has finished, whatever state each ended in. A node whose input didn't
   come through is marked `skipped` with the reason, rather than running on bad data.
-- **The graph extends itself.** When the item has no price, `RulePlanner` adds
-  `escalate_quote` and makes `build_finding` wait for it.
+- **The graph extends itself.** `RulePlanner` adds `escalate_quote` when the item
+  has no price, and one full `reread_deals` when the snapshot came back
+  incomplete; the nodes that need the new result wait for it.
+- **The prose is checked against the finding.** `llm/verify.py` rejects an
+  answer that states an id, escalation number or amount not in the finding, or
+  leaves out a required fact (section totals, undated-deal count, an
+  escalation or dry run). A failing answer gets one rewrite listing the
+  problems, then the plain template is used instead.
 - **Nodes can only do what `graph/registry.py` allows.** Nodes name registry
   entries, never raw MCP tools, so no plan or planner can reach
   `Deal.mark_lost.*`, `Quotation.convert_to_order.*` or any other write outside
@@ -107,10 +124,17 @@ One test decides between them:
 2. **If it is**, but this seat can't do it and a person or another seat can,
    escalate (`AgentEscalation.create`) and say so. Never guess a substitute answer.
 
-**The quote is the escalation case.** No `BOM.*` tool exists in this seat's
-catalogue, and every sales-visible price field on the sampled `Item` records is
-`0.0`. `price_lookup` quotes only from a real, non-zero list price (and labels it
-as a list price, not a BOM cost). Otherwise `escalate_quote` files an escalation:
+**The quote.** No `BOM.*` tool exists in this seat's catalogue, so a BOM-based
+price is never available. The item is looked up by id, code or name. No match
+or several matches are refused ("which one?"), and so is a quote with no
+stated quantity.
+- **If the item has a sell-side list price**, `price_lookup` quotes from it
+  (`default_rate`, `selling_price`, `standard_rate`, `mrp`; never
+  `purchase_rate`, which is a cost) and labels it as a list price, not a BOM
+  cost. **This is 94 of the 103 items on live data** (2026-09-26), including
+  SuryaTools Bench Vice 150mm (₹5,799). Whether a list price should answer a
+  "real BOM price" question at all is open; see `docs/TO_REVISIT.md` #3.
+- **Otherwise** `escalate_quote` files an escalation:
 - The subject is `T6-BOM quote for <qty>x <item_id>`.
 - If an **open** escalation with that exact subject already exists, it's reused
   rather than filing a duplicate.
@@ -121,8 +145,10 @@ as a list price, not a BOM cost). Otherwise `escalate_quote` files an escalation
   Meera Kulkarni until that's resolved; see `docs/TO_REVISIT.md`.
 
 **The refusal showcase** is a nonexistent id: `--chat "Look up deal <random uuid>"`,
-or `--item-id <random uuid>` for the quote. The agent refuses plainly, invents
-nothing and files nothing. It refuses only when the platform actually says
+or `--item <random uuid>` for the quote. The agent refuses plainly, invents
+nothing and files nothing. Out-of-scope parts of a free-text question
+(commission, payroll, ...) are refused too, and listed under `refusals` in the
+finding. It refuses only when the platform actually says
 `not_found`: an auth or network error is reported as an error, not as "doesn't exist".
 
 ## Writes to shared data
@@ -144,7 +170,7 @@ agent/
   transport/        mcp_client (typed errors, re-login), llm_client (glc_v5)
   domain/           deals, items, escalation, records: no LLM, pure where possible
   graph/            engine, registry (the allowlist), plans, planner, finding
-  llm/              narrate, chat_loop, tools (the chat loop's curated menu)
+  llm/              intent (classify), narrate, verify, chat_loop, tools (its curated menu)
   harness/          run_record (TaskRun), persist (platform writes)
 docs/               design notes, brief, recon, bug register
 tests/              hand-written tests go here
@@ -167,7 +193,10 @@ by hand, not by AI. The parts easiest to test without the network:
   that returns pages or raises `MCPToolError(code=...)`.
 - `graph.engine.Engine` with `plans.pipeline_review` and `RulePlanner`: a full
   graph run in memory with a fake client and `RunContext(today=...)`.
-- `graph.finding.build_finding`, `llm.narrate.render_template`: plain functions.
+- `graph.finding.build_finding`, `llm.narrate.render_template`,
+  `llm.verify.verify_claims`, `llm.intent.validate`: plain functions.
+- `domain.items.resolve_item`: a fake client whose `Item.list` returns 0, 1 or
+  several rows.
 
 For assertions that hold across runs, pin `--today` and assert against the deal
 snapshot saved in that run's `graph.json`, not fixed ids: the live book changes.
@@ -179,10 +208,10 @@ snapshot saved in that run's `graph.json`, not fixed ids: the live book changes.
   `--dry-run`, `--today`.
   - Checked against live data in dry runs only. **The path that writes to the
     platform hasn't been run yet.**
-- **Phase 2:** understand the request with the LLM (so `--item-id` isn't
-  needed), look items up by name, check every id and amount in the prose
-  against the finding, re-read an incomplete snapshot, and send anything else
-  to the chat loop.
+- **Phase 2 (done):** free-text questions classified and routed, items
+  looked up by name or code, the prose checked against the finding (one
+  rewrite, then the template), out-of-scope parts refused, an incomplete
+  snapshot re-read once. Checked in live dry runs and offline.
 - **Phase 3:** pause a run until an escalation is answered, then resume it
   (AgentTask plus `--resume`); an LLM planner limited to the registry; a
   richer at-risk rule.
