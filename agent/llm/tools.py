@@ -97,17 +97,20 @@ TOOL_SPECS: list[dict] = [
 ]
 
 
-def build_dispatch(client: MCPClient, session_id: str) -> dict[str, Callable[[dict], dict]]:
-    """name -> callable(arguments dict) -> result dict, bound to this run's client/session."""
+def build_dispatch(client: MCPClient, session_id: str | None,
+                   dry_run: bool = False) -> dict[str, Callable[[dict], dict]]:
+    """name -> callable(arguments dict) -> result dict, bound to this run's
+    client/session. dry_run suppresses the one write the LLM can trigger
+    (AgentEscalation.create); reads still happen."""
     return {
         "list_closing_this_month": lambda args: deals.list_closing_this_month(client),
         "list_at_risk": lambda args: deals.list_at_risk(client),
         "attempt_quote": lambda args: items.attempt_quote(
-            client, session_id, args["item_id"], int(args["qty"])),
+            client, session_id, args["item_id"], int(args["qty"]), dry_run=dry_run),
         "file_escalation": lambda args: escalation.file_escalation(
             client, session_id, reason=args["reason"],
             reason_code=args.get("reason_code", "other"),
-            subject=args.get("subject"), party_id=args.get("party_id")),
+            subject=args.get("subject"), party_id=args.get("party_id"), dry_run=dry_run),
         "get_deal": lambda args: records.get_deal(client, args["id"]),
         "get_lead": lambda args: records.get_lead(client, args["id"]),
     }
