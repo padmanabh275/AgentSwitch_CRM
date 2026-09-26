@@ -1,6 +1,6 @@
 """Thin JSON-RPC client for AgentSwitch's MCP surface + its login endpoint.
 
-Transport only — no business logic. See domain.py for that.
+Transport only — no business logic. See domain/ for that.
 """
 from __future__ import annotations
 

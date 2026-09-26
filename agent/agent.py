@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """The Sales/Pipeline agent loop (Team 6, seat 6) — a client loop, not a
-server. LLM <-> agent.py (this file) <-> domain.py <-> MCP/REST.
+server. LLM <-> agent.py (this file) <-> domain/ <-> MCP/REST.
 
 Usage:
     python3 agent.py [--item-id ITEM_ID] [--qty 500] [--query "..."]
 
-Requires glc_v5 running locally (`uv run glc serve`, see llm_client.py) and
-EMAIL / SURYODAYA_PW in .env (see mcp_client.py).
+Requires glc_v5 running locally (`uv run glc serve`, see transport/llm_client.py) and
+EMAIL / SURYODAYA_PW in .env (see transport/mcp_client.py).
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ import datetime as dt
 import json
 import os
 
-import tools
-from llm_client import LLMError, call_llm
-from mcp_client import MCPClient, SURYODAYA
+from llm import tools
+from transport.llm_client import LLMError, call_llm
+from transport.mcp_client import MCPClient, SURYODAYA
 
 MAX_TOOL_ITERATIONS = 12
 
