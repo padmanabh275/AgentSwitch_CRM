@@ -7,6 +7,8 @@ it's escalated. It never invents a number.
 """
 from __future__ import annotations
 
+import re
+
 from domain.escalation import file_escalation, quote_subject
 from transport.mcp_client import NOT_FOUND, MCPClient, MCPToolError
 
@@ -30,6 +32,46 @@ def get_item(client: MCPClient, item_id: str) -> dict:
             "item": {k: item.get(k) for k in ITEM_FIELDS}}
 
 
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+MAX_CANDIDATES = 20
+
+
+def resolve_item(client: MCPClient, ref: str) -> dict:
+    """An item from whatever the user called it: id, code or (part of) a name.
+
+    An id goes straight to Item.get. Otherwise Item.list's `search` (which
+    matches name and code, verified live) is used, and:
+      - one exact name/code match, or exactly one result -> that item
+      - no results -> refused ("no item matches ...")
+      - several -> refused, listing the candidates ("which one?")
+    Picking one of several would risk quoting the wrong part.
+    """
+    ref = ref.strip()
+    if _UUID.fullmatch(ref):
+        return {**get_item(client, ref), "query": ref, "matched_by": "id"}
+
+    page = client.call("Item.list", {"search": ref, "limit": MAX_CANDIDATES})
+    rows = page.get("data") or []
+    exact = [r for r in rows
+             if ref.casefold() in ((r.get("name") or "").casefold(), (r.get("code") or "").casefold())]
+    chosen = exact if len(exact) == 1 else rows if len(rows) == 1 else None
+    if chosen:
+        item = chosen[0]
+        return {"outcome": "answered", "item_id": item["id"], "query": ref,
+                "matched_by": "exact" if exact else "search",
+                "item": {k: item.get(k) for k in ITEM_FIELDS}}
+
+    base = {"outcome": "refused", "item_id": None, "query": ref}
+    if not rows:
+        return {**base, "reason": f"no item matches {ref!r} — nothing to quote"}
+    total = page.get("total", len(rows))
+    candidates = [{"id": r.get("id"), "name": r.get("name"), "code": r.get("code")} for r in rows]
+    names = "; ".join(f"{c['name']} ({c['code']})" for c in candidates[:5])
+    more = f" and {total - 5} more" if total > 5 else ""
+    return {**base, "candidates": candidates,
+            "reason": f"{ref!r} matches {total} items — which one? {names}{more}"}
+
+
 def price_lookup(item_section: dict, qty: int) -> dict:
     """Pure: the quote section for `qty` of an already-fetched item.
 
@@ -40,12 +82,13 @@ def price_lookup(item_section: dict, qty: int) -> dict:
     before tax, price breaks or discounts. price_source says which field.
     """
     item_id = item_section["item_id"]
-    base = {"requested_qty": qty, "item_id": item_id}
+    item = item_section["item"]
+    base = {"requested_qty": qty, "item_id": item_id,
+            "item_name": item.get("name"), "item_code": item.get("code")}
     if not isinstance(qty, int) or qty <= 0:
         return {**base, "outcome": "refused",
                 "reason": f"quantity must be a positive whole number, got {qty!r}"}
 
-    item = item_section["item"]
     for field in PRICE_FIELDS:
         v = item.get(field)
         if v:
@@ -66,15 +109,15 @@ def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
     esc = file_escalation(client, session_id, reason=priced["reason"], reason_code="other",
                           subject=quote_subject(priced["item_id"], priced["requested_qty"]),
                           dry_run=dry_run)
-    return {**esc, "requested_qty": priced["requested_qty"], "item_id": priced["item_id"],
-            "reason": priced["reason"]}
+    return {**esc, **{k: priced.get(k) for k in ("requested_qty", "item_id", "item_name",
+                                                 "item_code", "reason")}}
 
 
-def attempt_quote(client: MCPClient, session_id: str | None, item_id: str, qty: int,
+def attempt_quote(client: MCPClient, session_id: str | None, item_ref: str, qty: int,
                   dry_run: bool = False) -> dict:
-    """get_item -> price_lookup -> escalate_quote in one call — the chat
+    """resolve_item -> price_lookup -> escalate_quote in one call — the chat
     loop's tool shape. The graph runs the same three steps as nodes."""
-    item = get_item(client, item_id)
+    item = resolve_item(client, item_ref)
     if item["outcome"] != "answered":
         return {**item, "requested_qty": qty}
     priced = price_lookup(item, qty)

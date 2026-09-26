@@ -42,10 +42,11 @@ TOOL_SPECS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_id": {"type": "string", "description": "Item.id to quote"},
+                "item": {"type": "string",
+                         "description": "the item to quote: its name, code or id, as the user gave it"},
                 "qty": {"type": "integer", "description": "requested quantity"},
             },
-            "required": ["item_id", "qty"],
+            "required": ["item", "qty"],
         },
     },
     {
@@ -107,7 +108,7 @@ def build_dispatch(client: MCPClient, session_id: str | None, dry_run: bool = Fa
         "list_closing_this_month": lambda args: deals.list_closing_this_month(client, today),
         "list_at_risk": lambda args: deals.list_at_risk(client, today),
         "attempt_quote": lambda args: items.attempt_quote(
-            client, session_id, args["item_id"], int(args["qty"]), dry_run=dry_run),
+            client, session_id, args["item"], int(args["qty"]), dry_run=dry_run),
         "file_escalation": lambda args: escalation.file_escalation(
             client, session_id, reason=args["reason"],
             reason_code=args.get("reason_code", "other"),
