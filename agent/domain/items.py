@@ -10,8 +10,11 @@ from __future__ import annotations
 from domain.escalation import file_escalation, quote_subject
 from transport.mcp_client import NOT_FOUND, MCPClient, MCPToolError
 
-PRICE_FIELDS = ("default_rate", "selling_price", "standard_rate", "purchase_rate", "mrp")
-ITEM_FIELDS = ("id", "name", "code", "uom", "is_sellable", "default_bom_id") + PRICE_FIELDS
+# Sell-side price fields, in the order a quote uses them. purchase_rate is
+# deliberately absent: it's what Suryodaya pays, not what it charges.
+PRICE_FIELDS = ("default_rate", "selling_price", "standard_rate", "mrp")
+ITEM_FIELDS = ("id", "name", "code", "uom", "is_sellable", "is_manufactured",
+               "default_bom_id") + PRICE_FIELDS
 
 
 def get_item(client: MCPClient, item_id: str) -> dict:
