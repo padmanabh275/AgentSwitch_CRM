@@ -1,5 +1,8 @@
 # Recon findings — the quote-to-cash path as it actually behaves
 
+*Imported from the capstone working folder. Raw responses (`out/suryodaya/...`) and the
+harness scripts referenced below live there, not in this repo.*
+
 *Observed behaviour only. No implementation — specs for Sagar to build from.*
 
 Walked end to end on Suryodaya as `team06` (Pipeline/crm seat) on 2026-09-22.

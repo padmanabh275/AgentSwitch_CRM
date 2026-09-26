@@ -6,26 +6,139 @@ relevant code/docs live.
 
 ---
 
-## 1. Is `AgentMemory.create` worth keeping as the finding-storage step?
+## 1. Should open deals with no close date count as "at risk"?
 
-**Raised:** 2026-09-26, during the first live end-to-end run of `agent.py`.
+**Raised:** 2026-09-26, first live run of the task graph.
 
-**Context:** The three sub-questions (closing this month / at risk / quote)
-are already fully answered by `list_closing_this_month`/`list_at_risk`/
-`attempt_quote` themselves. `AgentMemory.create` is an *extra* step whose
-only job is to persist the structured finding JSON somewhere durable and
-machine-readable, so a grader doesn't have to re-parse the agent's prose
-answer. It's a workaround, not a requirement: `/api/agent/evidence/*` (the
-natural home for a structured answer) 403s for this seat — belongs to the
-accounting app — and there's no other purpose-built "submit your finding"
-tool anywhere in the 242-tool catalog. `category: "context"` is a repurposed
-fit, not its intended use (durable facts/preferences about a party).
+**Context:** 69 of the 88 open deals have no `expected_close_date`. The at-risk
+rule ("close date in the past") can't judge them, so it only covers 19 deals.
+They're currently listed separately in the finding as
+`open_without_close_date_ids` and mentioned in the answer, but not flagged.
 
-**Question:** keep it, or drop the persistence step entirely and let the
-printed finding JSON in the agent's own stdout/logs be the record?
+**Question:** leave the rule as is; flag them as at risk ("no close date" is a
+risk in itself); or add a second signal, such as staleness (`updated_at`) or
+`probability`, planned for Phase 3.
 
-**Where:** `agent.py`'s `main()` (the `AgentSession.create` + `AgentMemory.create`
-calls at the end of the run); design rationale in `SALES_AGENT_DESIGN.md`
-under "Platform facts".
+**Where:** `agent/domain/deals.py` → `at_risk()`.
 
-**Status:** unresolved, not blocking — the agent works either way.
+**Status:** unresolved. It changes the graded definition, so decide before the
+tests are written.
+
+---
+
+## 2. Why are our escalations unassigned?
+
+**Raised:** 2026-09-26.
+
+**Context:** `ESC-2026-00026` (filed by this agent) has `assignee_user_id`,
+`assignee_display` and `raised_at` all null. Team 04's `ESC-2026-00025` is
+assigned to Meera Kulkarni with `channel: "api"` and a 240-minute SLA. The old
+README claimed our escalations reach Meera; the record says otherwise.
+
+**Question:** what Team 04 does differently: passing `channel`, filing through
+the REST governance endpoint, or a separate assign/raise step. Until that's
+known, "escalated" may mean "recorded, but nobody is notified".
+
+**Where:** `agent/domain/escalation.py`; Team 04's filing code in
+`../AgentSwitch_team04` (capstone working folder).
+
+**Status:** unresolved. Investigate before relying on the escalation path in a demo.
+
+---
+
+## 3. Escalate the BOM quote, or solve it?
+
+**Raised:** during design (see `SALES_AGENT_DESIGN.md` → "Definitions locked").
+
+**Context:** the agent escalates because no `BOM.*` tool exists for this seat
+and every sampled Item price field is `0.0`. The brief allows escalate *or*
+refuse, but the quote might be meant to be solved some other way.
+`Quotation.list` (sales-owned) holds past quote prices, but a past quote price
+isn't a BOM price either. Relatedly, when an Item *does* have a list price,
+the agent quotes from it, labelled as a list price.
+
+**Question:** instructor clarification: is escalate the intended outcome, and
+is quoting from a list price acceptable at all?
+
+**Where:** `agent/domain/items.py` → `price_lookup()`, `escalate_quote()`.
+
+**Status:** unresolved, waiting on the instructor.
+
+---
+
+## 4. Which item to use for the quote demo?
+
+**Context:** the item used so far (`dd873bd7-…`, Torsion Spring SS304) has
+`is_sellable: 0` and `default_bom_id: null`. It has no BOM at all, so it's a
+weak "real BOM price" example. A manufactured item with a `default_bom_id`
+shows the actual wall.
+
+**Status:** unresolved. Needs a read-only `Item.list` pass to pick a good one.
+
+---
+
+## 5. The first run that writes to the platform
+
+**Context:** every Phase 1 run so far used `--dry-run`. The first run without
+it will create a `T6-` session, an AgentMemory, and a **new** escalation. The
+subject is now `T6-BOM quote for …`, so it won't match the older unprefixed
+`ESC-2026-00026`, which is still `open`.
+
+**Question:** run it supervised once (after #2), and decide whether to withdraw
+the stale `ESC-2026-00026`. Withdrawing is a write to a record other people can see.
+
+**Status:** unresolved. Needs explicit go-ahead.
+
+---
+
+## 6. Should writes be opt-in?
+
+**Context:** writes currently happen unless `--dry-run` is passed. An
+accidental plain run creates platform records and possibly an escalation. The
+alternative is to default to dry run and require `--write`.
+
+**Where:** `agent/run.py`.
+
+**Status:** unresolved. The current default matches what the brief expects of
+a real run.
+
+---
+
+## 7. Should our own `T6-` test deals be excluded from the lists?
+
+**Context:** earlier probes left `T6-…` deals in the shared book (e.g.
+`value: 1.0`). None were in either list on 2026-09-26, but a test deal with a
+close date this month would be counted.
+
+**Question:** exclude titles starting with `T6-`, flag them, or leave them in.
+
+**Where:** `agent/domain/deals.py`.
+
+**Status:** unresolved, low priority.
+
+---
+
+## 8. Is re-login on HTTP 401 the right trigger?
+
+**Context:** `MCPClient.call` logs in again and retries once on HTTP 401. That
+an expired token produces a 401 (rather than, say, a 200 with an error body)
+is an assumption; it hasn't been observed.
+
+**Where:** `agent/transport/mcp_client.py`.
+
+**Status:** unverified. Check when a long-running session actually expires.
+
+---
+
+## Resolved
+
+### Is `AgentMemory.create` worth keeping as the finding-storage step?
+
+**Raised:** 2026-09-26. **Resolved:** 2026-09-26 — **kept.**
+
+No purpose-built "submit your finding" tool exists, `/api/agent/evidence/*`
+403s for this seat, and `AgentMessage` turned out to be read-only (no
+`create`). So `AgentMemory.create` (`category: "context"`) remains the
+platform copy of the finding. It's no longer the only record: every run also
+saves `runs/<run_id>/taskrun.json` locally first, and a failed AgentMemory
+write is only a warning.

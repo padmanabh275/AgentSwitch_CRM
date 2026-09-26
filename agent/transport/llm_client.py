@@ -2,7 +2,7 @@
 local LLM gateway — a separate repo, not part of AgentSwitch).
 
 glc_v5 must be running (`uv run glc serve`, port 8111 by default) alongside
-this agent. See SALES_AGENT_DESIGN.md's "Architecture locked" section.
+this agent. See docs/SALES_AGENT_DESIGN.md → "Architecture".
 """
 from __future__ import annotations
 

@@ -1,128 +1,199 @@
 # Sales / Pipeline agent — Team 6, seat 6
 
-A client agent (a loop, not a server) for Suryodaya Precision Works. It
-answers, against **live** data:
+A client agent (it calls AgentSwitch; it isn't a server) for Suryodaya Precision
+Works. It answers, against **live** data:
 
 > "What closes this month, what is at risk, and quote 500 units off the real
 > BOM price."
 
-Full design rationale and platform facts: `SALES_AGENT_DESIGN.md`. Open
-questions not yet settled: `TO_REVISIT.md`.
+Design rationale and platform facts: [`docs/SALES_AGENT_DESIGN.md`](docs/SALES_AGENT_DESIGN.md).
+Open decisions: [`docs/TO_REVISIT.md`](docs/TO_REVISIT.md).
 
-## Running it
-
-Needs `glc_v5` (a separate repo — the LLM gateway) running locally, and
-`EMAIL`/`SURYODAYA_PW` in `.env` at this repo's root.
+## Quick start
 
 ```bash
-cd ../glc_v5 && uv run glc serve &   # or wherever glc_v5 lives; port 8111
-cd -
-python3 agent.py --item-id <a real Item.id> --qty 500
+uv sync                                   # Python >=3.10; the agent itself is stdlib-only
+printf 'EMAIL=...\nSURYODAYA_PW=...\n' > agent/.env   # your seat login (gitignored)
+(cd path/to/glc_v5 && uv run glc serve &) # LLM gateway, port 8111 — see below
+
+uv run python agent/run.py --item-id <Item.id> --qty 500 --dry-run
 ```
 
-`--item-id` is optional — omit it to skip the quote question and answer only
-"closing this month" / "at risk". `--query` overrides the composite question
-entirely, for testing a single tool in isolation (e.g. a get_deal refusal).
-
-## Architecture
-
-```
-LLM  <->  agent.py (the loop)  <->  domain.py (real logic, zero LLM)  <->  MCP/REST
-```
-
-The LLM only ever sees a **curated menu of six tools** (`tools.py`) — never
-raw MCP passthrough. Every write/transition/bypass tool on this seat
-(`Deal.mark_lost.*`, `Quotation.convert_to_order.*`, etc.) is excluded from
-the LLM's reach by construction, not by prompting:
-
-| Tool | What it does |
+| Flag | Effect |
 |---|---|
-| `list_closing_this_month` | Paginated `Deal.list` + forecast filter |
-| `list_at_risk` | Paginated `Deal.list` + overdue-open filter |
-| `attempt_quote` | Tries the BOM-dependent price path; escalates when it can't |
-| `file_escalation` | Wraps `AgentEscalation.create` |
-| `get_deal` / `get_lead` | Generic single-record reads (flexibility valve) |
+| `--item-id ID`, `--qty N` | The item and quantity to quote. Without `--item-id` the quote is refused ("which item?"). |
+| `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three). |
+| `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
+| `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
+| `--chat "question"` | Free-form question through the LLM tool loop instead of the graph. |
 
-Each tool call produces one section of a **structured finding** — a
-gradable JSON object, separate from whatever prose the LLM writes — printed
-to stdout and (best-effort) persisted via `AgentMemory.create`. Only the
-finding's `deal_ids`/`outcome` fields are meant to be graded; a verifier
-re-derives the same lists live and diffs, never trusts the prose.
+Every run writes `runs/<run_id>/taskrun.json` (steps, finding, answer, warnings)
+and, for the graph path, `runs/<run_id>/graph.json` (every node's full output,
+including the deal snapshot). `runs/` is gitignored.
 
-## Risk definition
+**LLM gateway.** LLM calls go through `glc_v5`, a separate local repo (`GLC_URL`, default `http://127.0.0.1:8111`). It's pinned to the `gemini`
+provider (`GLC_PROVIDER`): unpinned, it picks a local Ollama model that writes
+tool calls out as text instead of making them. If the gateway is down, the
+graph path still answers, using a plain template instead of LLM prose; `--chat`
+can't run without it.
 
-- **"Closing this month"** = an open-stage deal (`new`/`qualification`/
-  `proposal`/`negotiation`) whose `expected_close_date` falls in the current
-  calendar month. Deliberately excludes deals already `closed_won` this
-  month — that's an "actuals" question, a different one.
-- **"At risk"** = an open deal (any stage except `closed_won`/`closed_lost`)
-  whose `expected_close_date` is already in the past. A deal can be in both
-  lists at once — "due this month" and "already overdue" aren't mutually
-  exclusive, and the agent doesn't force them to be.
-- `_rot_level`/`_rot_days` (a field that looked like a ready-made staleness
-  signal) was tried and ruled out — only ever `none`/`fresh` across a
-  100-row live sample.
-- Both lists paginate `Deal.list` themselves and filter in Python, because
-  the platform has no server-side filter or aggregate on it (bug
-  `a81bd641`: the schema advertises `limit<=1000` but the server silently
-  caps real pages at 50). A partial sum would otherwise be indistinguishable
-  from a complete one — every list result carries `pagination_complete` to
-  make that visible.
+## How it works
 
-## Escalation path
+```
+                 run.py
+       ┌───────────┴───────────┐
+   graph path (default)     --chat
+       │                       │
+  graph/ (task graph)     llm/chat_loop.py (LLM picks tools from llm/tools.py)
+       │                       │
+       └──────── domain/ (all the real logic, no LLM) ──── transport/ ──── AgentSwitch MCP
+```
 
-`file_escalation` wraps `AgentEscalation.create`. The only registered
-assignee on this platform is **Meera Kulkarni**
-(`meera.kulkarni@suryodaya.in`) — confirmed via
-`GET /api/agent-governance/escalations/assignees`.
+The composite question runs as a small task graph. Only the asked-for branches
+are built:
 
-`reason_code` defaults to `"other"`: the enum
-(`unresolved_after_retries`/`customer_asked_for_a_person`/`policy_refusal`/
-`sensitive_topic`/`agent_error`/`other`) has no value for "my seat can't
-reach this app" — the single most predictable escalation reason on a
-seat-scoped platform (bug candidate E1, filed as `4e90fc79`).
+```
+snapshot_deals ─┬─ closing_this_month ─┐
+                └─ at_risk ────────────┤
+get_item ── price_lookup ──(+ escalate_quote)─┤
+                                 build_finding ── narrate
+```
 
-**When the agent escalates:** it's legitimately the agent's job, it can't do
-it directly, but a human or another seat plausibly can. The concrete case
-built into this agent: quoting a price. No `BOM.*` tool exists anywhere in
-this seat's tool catalog (confirmed against the live 242-tool list, not
-just an empty result), and every sales-visible price field on `Item`
-(`default_rate`, `selling_price`, `standard_rate`, `purchase_rate`, `mrp`)
-is `0.0` on real live data. `attempt_quote` checks for a real price first
-and only escalates when none exists — verified live: escalating never
-produces a fake number, and the filed escalation (`ESC-2026-00026` in
-testing) is independently readable back via `AgentEscalation.get`.
+- **The finding is computed in code, not by the LLM.** `build_finding` assembles
+  every requested section on every run: answered, refused, escalated, error,
+  skipped (with the reason), or not_requested. The LLM only turns the finding
+  into prose (`narrate`).
+- **One failed branch doesn't sink the others.** `build_finding` runs once every
+  branch has finished, whatever state each ended in. A node whose input didn't
+  come through is marked `skipped` with the reason, rather than running on bad data.
+- **The graph extends itself.** When the item has no price, `RulePlanner` adds
+  `escalate_quote` and makes `build_finding` wait for it.
+- **Nodes can only do what `graph/registry.py` allows.** Nodes name registry
+  entries, never raw MCP tools, so no plan or planner can reach
+  `Deal.mark_lost.*`, `Quotation.convert_to_order.*` or any other write outside
+  it. The only write in the registry is `escalate_quote`.
+- **Errors keep their code.** `transport/mcp_client.py` raises `MCPToolError` with
+  the platform's `error.data.code` (`not_found`, `invalid_arguments`,
+  `tool_not_available`, ...) or a transport code (`transient`, `auth`,
+  `forbidden`). Only `not_found` becomes a refusal; transient failures are
+  retried on read nodes (never on writes); an expired login is renewed once.
 
-## Refusal conditions
+## Definitions
 
-Escalate-vs-refuse is one test, not two overlapping ones:
+- **Closing this month**: an open deal (`new`/`qualification`/`proposal`/`negotiation`)
+  whose `expected_close_date` falls in the current month on the **IST** calendar.
+  Deals already `closed_won` this month are excluded: that's a question about
+  actuals, not the forecast.
+- **At risk**: an open deal whose `expected_close_date` has already passed.
+  Each flagged deal carries its reason and days overdue, largest value first.
+  A deal can be in both lists (due this month *and* already overdue).
+  - Open deals with **no** close date can't be judged by this rule. They're
+    listed separately as `open_without_close_date_ids`. On 2026-09-26 that was
+    69 of 88 open deals; see `docs/TO_REVISIT.md`.
+  - `_rot_level`/`_rot_days` looked like a ready-made risk signal but was ruled
+    out: only ever `none`/`fresh` across a 100-row live sample.
+- **Both lists come from one read** (`snapshot_deals`) of every deal, so they
+  describe the same moment in a book Team 07 also writes to. `Deal.list`
+  silently caps pages at 50 (bug `a81bd641`), so the agent pages through itself.
+  `pagination_complete` is `false` if the server omits `total` or rows shift
+  during the read, so a partial list never passes as complete.
 
-1. **Is this legitimately the agent's job at all?** If not — refuse, file
-   nothing. Examples: a payroll/commission question, another rep's private
-   data, a discount past policy, an id that turns out not to exist.
-2. **If yes**, and the seat can't do it directly but a human/another seat
-   plausibly can → escalate (see above).
+## Escalation and refusal
 
-**The locked refusal showcase:** `get_deal`/`get_lead` called with a
-nonexistent id. Both call the real MCP tool (`Deal.get`/`Lead.get`); a
-not-found response is reported back plainly — `outcome: "refused"` — and
-nothing is invented, nothing is filed. This was chosen over the other
-candidates (commission question, discount policy, another rep's data)
-because it's the only one testable end-to-end with no invented policy
-threshold and no dependency on whether this seat is even scoped per-rep (it
-likely isn't — `Deal.list` appears company-wide).
+One test decides between them:
 
-## Known operational gotchas (see `SALES_AGENT_DESIGN.md` / `TO_REVISIT.md`)
+1. **Is this legitimately the agent's job?** If not, refuse and file nothing.
+   Examples: payroll/commission, a discount past policy, an id that doesn't exist.
+2. **If it is**, but this seat can't do it and a person or another seat can,
+   escalate (`AgentEscalation.create`) and say so. Never guess a substitute answer.
 
-- The LLM gateway (`glc_v5`) must be pinned to a provider with native
-  tool-calling. Left un-pinned, it defaults to a local Ollama model whose
-  `tool_call_dialect` is `prompted_fallback` — it narrates tool calls as
-  text instead of making them, and nothing gets dispatched.
-- Gemini's function-calling schema rejects `additionalProperties` — plain
-  JSON Schema, but outside Gemini's OpenAPI-subset dialect. Tool specs in
-  `tools.py` deliberately omit it.
-- `session_id` on `AgentMemory.create`/`AgentEscalation.create` is a hidden
-  foreign key to a real `AgentSession` row, not a free-form string — the
-  schema gives no indication of this (candidate bug F1, not yet filed).
-  `agent.py` calls `AgentSession.create` at startup and uses its id
-  everywhere `session_id` is required.
+**The quote is the escalation case.** No `BOM.*` tool exists in this seat's
+catalogue, and every sales-visible price field on the sampled `Item` records is
+`0.0`. `price_lookup` quotes only from a real, non-zero list price (and labels it
+as a list price, not a BOM cost). Otherwise `escalate_quote` files an escalation:
+- The subject is `T6-BOM quote for <qty>x <item_id>`.
+- If an **open** escalation with that exact subject already exists, it's reused
+  rather than filing a duplicate.
+- `reason_code` is `other`: the enum has no value for "my seat can't reach
+  that app" (bug `4e90fc79`).
+- ⚠️ Escalations filed from this seat so far show **no assignee**
+  (`ESC-2026-00026`: `assignee_user_id: null`). Don't assume one reaches
+  Meera Kulkarni until that's resolved; see `docs/TO_REVISIT.md`.
+
+**The refusal showcase** is a nonexistent id: `--chat "Look up deal <random uuid>"`,
+or `--item-id <random uuid>` for the quote. The agent refuses plainly, invents
+nothing and files nothing. It refuses only when the platform actually says
+`not_found`: an auth or network error is reported as an error, not as "doesn't exist".
+
+## Writes to shared data
+
+Without `--dry-run`, a run writes to the team's own agent space on AgentSwitch:
+an `AgentSession` titled `T6-Sales pipeline agent run`, at most one escalation
+(or reuses an open one), an `AgentMemory` holding the finding, and an
+`AgentSession.update` with the tool-call count and run id. The local run record
+is saved **before** any of these, and a failed platform write becomes a warning,
+never a lost run. There's no `AgentMessage.create` tool for this seat, so the
+full trace lives in `runs/`.
+
+## Repo layout
+
+```
+agent/
+  run.py            entry point
+  config.py         .env loading, runs/ location
+  transport/        mcp_client (typed errors, re-login), llm_client (glc_v5)
+  domain/           deals, items, escalation, records: no LLM, pure where possible
+  graph/            engine, registry (the allowlist), plans, planner, finding
+  llm/              narrate, chat_loop, tools (the chat loop's curated menu)
+  harness/          run_record (TaskRun), persist (platform writes)
+docs/               design notes, brief, recon, bug register
+tests/              hand-written tests go here
+```
+
+## Testing
+
+```bash
+uv run pytest
+```
+
+pytest is configured in `pyproject.toml` (`testpaths = tests`, `agent/` on the
+import path, so `from domain import deals` works). The graded tests are written
+by hand, not by AI. The parts easiest to test without the network:
+
+- `domain.deals.closing_this_month(snapshot, today)` / `at_risk(...)`: plain
+  functions over a snapshot dict and a date.
+- `domain.deals.snapshot_deals(client)`, `items.get_item`, `records.get_deal`,
+  `escalation.file_escalation`: need only an object with `.call(name, args)`
+  that returns pages or raises `MCPToolError(code=...)`.
+- `graph.engine.Engine` with `plans.pipeline_review` and `RulePlanner`: a full
+  graph run in memory with a fake client and `RunContext(today=...)`.
+- `graph.finding.build_finding`, `llm.narrate.render_template`: plain functions.
+
+For assertions that hold across runs, pin `--today` and assert against the deal
+snapshot saved in that run's `graph.json`, not fixed ids: the live book changes.
+
+## Status
+
+- **Phase 1 (done):** typed errors, one deal snapshot, the task graph with
+  fixed plans and the rule planner, the finding built in code, run records,
+  `--dry-run`, `--today`.
+  - Checked against live data in dry runs only. **The path that writes to the
+    platform hasn't been run yet.**
+- **Phase 2:** understand the request with the LLM (so `--item-id` isn't
+  needed), look items up by name, check every id and amount in the prose
+  against the finding, re-read an incomplete snapshot, and send anything else
+  to the chat loop.
+- **Phase 3:** pause a run until an escalation is answered, then resume it
+  (AgentTask plus `--resume`); an LLM planner limited to the registry; a
+  richer at-risk rule.
+
+## Docs
+
+| File | What |
+|---|---|
+| [`docs/agent_build_handoff.md`](docs/agent_build_handoff.md) | The brief: requirements and definition of done |
+| [`docs/SALES_AGENT_DESIGN.md`](docs/SALES_AGENT_DESIGN.md) | Decisions, platform facts, finding schema, architecture |
+| [`docs/TO_REVISIT.md`](docs/TO_REVISIT.md) | Open decisions |
+| [`docs/UNHAPPY_PATHS.md`](docs/UNHAPPY_PATHS.md) | Recon: error envelope and codes, guard behaviour |
+| [`docs/SALES_AGENT_PATH.md`](docs/SALES_AGENT_PATH.md) | Recon: the quote-to-cash path and its traps |
+| [`docs/BUGS_FILED.md`](docs/BUGS_FILED.md) | Team 6 bug register |

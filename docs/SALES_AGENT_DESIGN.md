@@ -1,8 +1,11 @@
 # Sales agent — design decisions and progress
 
 *Working notes from an iterative design conversation. Read this after `/clear` to
-resume where we left off. Companion docs: `agent_build_handoff.md` (the brief),
-`SALES_AGENT_PATH.md` (quote-to-cash recon), `how_to_file_bugs.md` (bug process).*
+resume where we left off. Companion docs (all in `docs/`): `agent_build_handoff.md`
+(the brief), `SALES_AGENT_PATH.md` (quote-to-cash recon), `UNHAPPY_PATHS.md`
+(error-code recon), `TO_REVISIT.md` (open decisions). Raw probe evidence
+(`out/suryodaya/...`), the recon harness and `how_to_file_bugs.md` live in the
+capstone working folder, outside this repo.*
 
 ## The task
 
@@ -17,8 +20,16 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
 
 ## Definitions locked
 
-- **At risk** = open deal (`stage` not `closed_won`/`closed_lost`) whose
-  `expected_close_date` is in the past.
+- **At risk** = open deal (`stage` in `new`/`qualification`/`proposal`/`negotiation`)
+  whose `expected_close_date` is in the past. Open deals with *no* close date
+  can't be judged by this rule and are reported separately
+  (`open_without_close_date_ids`) — 69 of 88 open deals on 2026-09-26, so
+  whether they should count is an open decision (`TO_REVISIT.md`).
+- **"Open" is one shared definition** (`domain.deals.is_open`): the four
+  forecast stages. A stage outside the known six counts as neither open nor
+  closed and is surfaced as `unknown_stage_ids`, not silently included.
+- **Dates are judged on the IST calendar** (Suryodaya is in India; UTC's
+  "today" is a day behind between 00:00 and 05:30 IST).
 - **Closing this month** = open-stage deal (`new`/`qualification`/`proposal`/`negotiation`)
   whose `expected_close_date` falls in the current calendar month. Forecast
   reading — deliberately excludes deals that already closed `closed_won` this
@@ -56,18 +67,20 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
 ## Platform facts (from live probing — don't re-derive, re-verify if stale)
 
 - MCP transport: plain JSON-RPC over `POST $SURYODAYA/api/mcp`, Bearer token from
-  `POST /api/auth/login {email,password} -> {token}`. Credentials in `.env`
-  (`EMAIL`, `SURYODAYA_PW`), loaded via `harness/env.sh`.
+  `POST /api/auth/login {email,password} -> {token}`. Credentials in `agent/.env`
+  (`EMAIL`, `SURYODAYA_PW`), loaded by `agent/config.py`.
 - The handoff's "Opportunities" = the `Deal` entity here (`Deal.list`, `Deal.get`,
   `Pipeline.list`/`Pipeline.get`).
 - `_rot_level`/`_rot_days` on Deal records is **not** a usable risk signal — only
   ever `none`/`fresh` across a 100-row sample, always `none`/`0` on closed deals.
   Looked promising, ruled out after checking real data.
-- **No server-side filter or aggregate exists** on `Deal.list` (pre-existing bug
-  `a81bd641`: max 50/page, 137+ total deals, no stage/date filter, no group-by).
-  Consequence: our domain code must **paginate every page itself and
-  filter/sum in Python** — never let the LLM eyeball a partial page and report a
-  total as if complete.
+- **No server-side aggregate or date-range filter exists** on `Deal.list`
+  (pre-existing bug `a81bd641`: max 50/page, 138 total deals on 2026-09-26, no
+  group-by). Exact-match filters *do* work — `stage: "proposal"` returned only
+  proposal deals (verified 2026-09-26) — but nothing can express "close date
+  in this month" or "before today". Consequence: our domain code must
+  **paginate every page itself and filter/sum in Python** — never let the LLM
+  eyeball a partial page and report a total as if complete.
 - **BOM wall is real and total, not a 403**: no `BOM.*` tool exists anywhere in
   the live 242-tool list. `Item` records carry `default_bom_id`/`design_bom_id`
   (bare unresolvable UUIDs) and `is_manufactured`/`routing_id`. Sales-visible
@@ -79,6 +92,30 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
   `GET /api/agent-governance/escalations/assignees` — the only entry is
   **Meera Kulkarni** (`meera.kulkarni@suryodaya.in`), also `created_by` on most
   seeded historical sessions.
+  - **But our own escalation came back unassigned** (checked 2026-09-26):
+    `ESC-2026-00026` has `assignee_user_id`, `assignee_display` and
+    `raised_at` all null, while Team 04's `ESC-2026-00025` shows
+    `assignee_display: "Meera Kulkarni"`, `channel: "api"`, `sla_minutes: 240`.
+    Something about how they file differs. The agent now reports the assignee
+    read back from the record, never a hard-coded name. Open item in
+    `TO_REVISIT.md`.
+  - `AgentEscalation.list`'s `subject` filter is **exact-match** (a prefix
+    returns nothing; `search` does substring). Observed statuses: `open`,
+    `withdrawn`. This is what makes escalation idempotent: before filing, the
+    agent looks for an open escalation with the same `T6-...` subject.
+- Error envelope and codes: see `UNHAPPY_PATHS.md`. Always HTTP 200 with
+  `error.data.code` in `not_found` / `invalid_arguments` / `invalid_transition` /
+  `tool_not_available`. A malformed id (`Item.get {id:"not-a-uuid"}`) returns
+  `not_found`, not `invalid_arguments` (re-verified 2026-09-26).
+- **`AgentMessage` is read-only for this seat** — `list`/`get` only, no
+  `create`. The run transcript therefore lives in local run records, not on
+  the platform. `AgentTask` does have `create`/`pause`/`resume`/`complete`
+  (the planned mechanism for waiting on an escalation reply), and
+  `AgentSession.update` accepts `total_tool_calls` and a string `metadata`.
+- The item used in testing so far, `dd873bd7-…` (Torsion Spring SS304,
+  `ASP-H-011`), has `is_sellable: 0` and `default_bom_id: null` — no BOM
+  exists for it at all, so it's a weak example for a "BOM price" demo. Pick
+  a manufactured item with a `default_bom_id`.
 - `POST /api/agent/chat` exists and is tied to our own seat's persona ("Sales
   Agent", seat_number 6) — **decided not to build on it**. It looks like
   AgentSwitch's own built-in chat product feature: session history under it is
@@ -92,10 +129,13 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
   `"App 'accounting' is not enabled for your account"`. No native slot; we use
   `AgentMemory.create` ourselves instead.
 
-## Bug candidates filed (in `bugs_candidates.json`, NOT yet submitted to the API)
+## Bug candidates E1–E3
 
-Per `how_to_file_bugs.md`, candidates are handed off, not auto-filed. IDs E1-E3
-were added this round:
+**Status (2026-09-23, see `BUGS_FILED.md`):** E1 filed as `4e90fc79`; E2 filed
+as `87d456e5` (premise corrected before filing — no `stage` value is accepted
+by `Deal.update` at all, not just an undeclared enum); E3 **not** filed — it
+duplicated a report already on file from 2026-09-17. The notes below are the
+original candidate write-ups.
 
 - **E1** — `AgentEscalation.reason_code` enum has no value for a cross-app
   capability gap (the single most predictable escalation reason on a
@@ -106,19 +146,48 @@ were added this round:
 - **E3** — the sales/Pipeline seat can write to `Item`, a manufacturing-owned
   entity (found via a leftover prior test record's own description field).
   Flagged as "confirm intent before filing as a bug" — may be deliberate (sales
-  plausibly needs to create sellable items). **Instructor question drafted but
-  not yet sent** — see chat log or ask to have it re-drafted.
+  plausibly needs to create sellable items). (Moot — see status above.)
 
-Evidence for all three saved under `out/suryodaya/probes/`. A ready-to-paste
-prompt for a fresh session to file E1/E2 (and ask before E3) was given in
-conversation — regenerate it if needed by asking to file the E-series candidates.
+Evidence for all three is under `out/suryodaya/probes/` in the capstone
+working folder (not in this repo).
 
-## Architecture locked
+## Architecture
+
+**Revised 2026-09-26 (Phase 1): the composite question runs as a task graph.**
+The original design (below) had the LLM drive a tool loop and the finding was
+assembled from whichever tools it happened to call — so a gradable section
+could silently go missing. A review found that, plus errors all being read as
+"not found", two separate deal reads per run, and no run log. The fix, ported
+from `designreview/core/dag_engine.py` (Team 21's port of S17's live graph)
+and S18's harness pattern:
+
+- `domain/` stays the zero-LLM core. `transport/` raises typed `MCPToolError`s.
+- `graph/`: nodes end with a `NodeOutcome` (answered / refused / escalated /
+  deferred / error / skipped). Each node declares `needs` — `"answered"` (skip
+  if a dependency didn't answer) or `"done"` (the partial join: run once
+  everything finished, however it ended). Nodes name entries in
+  `graph/registry.py` — the allowlist — never raw MCP tools. `RulePlanner` adds
+  `escalate_quote` when the item is unpriced. Stdlib-only and sequential:
+  networkx and threads bought nothing at ~8 nodes.
+- `build_finding` is a graph node: the finding is computed in code on every
+  run, independent of the LLM. The LLM only narrates it (`llm/narrate.py`),
+  with a deterministic template fallback.
+- `harness/`: an S18-style `TaskRun` saved to `runs/<run_id>/` *before* any
+  platform write; `graph.json` beside it holds every node's output.
+- The LLM tool loop is kept as `run.py --chat` for free-form questions, still
+  behind the curated menu below.
+- Roadmap: Phase 2 (LLM request parsing, item lookup by name, checking the
+  prose against the finding), Phase 3 (wait for escalation replies and
+  resume, an LLM planner limited to the registry, a richer at-risk rule). See
+  `README.md` → Status.
+
+**Original design (2026-09-2x), still the basis of the `--chat` path:**
 
 - **Hand-rolled Python client loop**, three-layer split (mirrors Team04's
   graded prior submission, analyzed in the "Ideas for Harness" doc —
   `https://claude.ai/artifact/WVrWLdxaquYY82kPejt9k1`):
   `LLM ↔ agent.py (the loop) ↔ domain.py (real logic, zero LLM, unit-testable) ↔ MCP/REST`.
+  (Now `llm/chat_loop.py` ↔ `domain/`.)
 - **Curated tool menu** for the LLM — not raw MCP passthrough. Deliberately
   excludes every write/transition/bypass tool (e.g. `Deal.mark_lost.new.closed_lost`,
   `Quotation.convert_to_order.*`) from the LLM's reach entirely, by construction:
@@ -187,33 +256,30 @@ conversation — regenerate it if needed by asking to file the E-series candidat
   Storage target: `AgentMemory.create` (`category: "context"`, `content` = this
   JSON as a string, tagged with our own `session_id`).
 
-## Not yet done — pick up here
+  **Additions in Phase 1 (2026-09-26) — additive; nothing above was removed:**
+  - Every requested section is always present. Sections gained two outcomes:
+    `skipped` (a dependency didn't answer; carries `node` and `reason`) and
+    `not_requested` (excluded via `--asks`). `error` sections carry `node` and
+    `error_code`.
+  - `closing_this_month` / `at_risk`: `deals` (per-deal summaries: title,
+    value, stage, dates, owner; `days_overdue` for at-risk), `total_by_currency`
+    (`total_value` is null if currencies are mixed), `snapshot_at`. `at_risk`
+    also has `as_of`, `total_value` and `open_without_close_date_ids`.
+  - `quote`: `price_source` when quoted (it's the Item's list price, not a BOM
+    cost); `number`, `status`, `assignee`, `reused_existing` when escalated;
+    `dry_run` and `would_file` under `--dry-run`. `outcome: "refused"` also
+    covers "no item specified" and a non-positive quantity.
+  - Top level: `run_id`, `session_id`, `dry_run`. `generated_at` is the local
+    clock in IST — still no server-clock source.
 
-1. ~~Finalize the finding schema~~ — **done**, see FINAL schema above.
-2. ~~Lock a pure-refuse example~~ — **done**, nonexistent deal/quote ID, see
-   above. (BOM-as-escalate is still open pending instructor input — not the
-   same thing as this item.)
-3. **Code written — `mcp_client.py`, `llm_client.py`, `domain.py`, `tools.py`,
-   `agent.py` all exist at repo root.** Compiles clean, imports clean, and
-   `domain.py`'s pure logic (pagination-across-pages, both filters,
-   attempt_quote's quoted/escalated/refused branches, get_deal/get_lead's
-   refuse-on-not-found) is verified against fake-client unit tests — not yet
-   run against live Suryodaya data or a live `glc_v5`. Still open:
-   - `agent.py`'s tool-loop (`run()`) itself is untested — only the domain
-     functions it calls have been exercised directly.
-   - `generated_at` uses local UTC clock, not a real server-clock source (none
-     was found) — noted as a known gap, not silently fixed.
-4. ~~Send instructor question about E3; file E1/E2~~ — **done, stale item**.
-   Per `BUGS_FILED.md`'s "Session of 2026-09-23": E1 filed as `4e90fc79`, E2
-   filed as `87d456e5` (with a correction to E2's premise before filing — no
-   `stage` value is accepted, not just an undeclared enum). E3 was correctly
-   **not** filed: it duplicated a report already on file from 2026-09-17 (E3's
-   own "evidence" was a leftover test record created by that earlier probe).
-   The instructor question about E3 is therefore moot — nothing new to ask.
-5. Run end-to-end against live Suryodaya data + a live `glc_v5` (handoff's
-   definition of done) — start `uv run glc serve` in `glc_v5`, then
-   `python3 agent.py --item-id <a real Item.id> --qty 500`.
-6. ~~Write the README~~ — **done**, see `README.md` at repo root: risk
-   definition, escalation path, refusal conditions, plus the operational
-   gotchas found during the live run (provider pinning, Gemini schema
-   quirk, the `session_id` FK).
+## Progress
+
+- **2026-09-26 — Phase 1 done** (branch `feature/sales-pipeline-agent-loop`):
+  the task graph, typed errors, one deal snapshot per run, idempotent T6-
+  escalations, run records, `--dry-run`, `--today`, pytest via uv. Verified
+  against live Suryodaya data in dry runs (graph path and the `--chat`
+  refusal) and offline with fake clients. **The path that writes to the
+  platform (session, escalation, memory) has not been run yet.**
+- Earlier checklist items (finding schema, pure-refuse example, E1/E2 filing,
+  README) are all done — see git history for the old list.
+- Next: Phase 2/3 per `README.md` → Status; open decisions in `TO_REVISIT.md`.

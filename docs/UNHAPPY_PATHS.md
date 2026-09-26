@@ -1,5 +1,8 @@
 # Recon findings — failure modes the sales agent must branch on
 
+*Imported from the capstone working folder. Raw responses (`out/suryodaya/...`) and the
+harness scripts referenced below live there, not in this repo.*
+
 *Observed behaviour only. 26 probes against the live seat, 2026-09-22.*
 *Raw responses in `out/suryodaya/unhappy/`, matrix in `_matrix.json`. Rerun: `harness/unhappy_paths.py`.*
 

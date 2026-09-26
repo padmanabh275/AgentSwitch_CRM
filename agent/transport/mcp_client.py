@@ -3,7 +3,7 @@
 Transport only — no business logic. See domain/ for that.
 
 Every failure surfaces as an MCPToolError carrying a `code` to branch on
-(see UNHAPPY_PATHS.md). The first four are the platform's own
+(see docs/UNHAPPY_PATHS.md). The first four are the platform's own
 `error.data.code` values; the rest are assigned here for failures that
 never reach a JSON-RPC envelope:
 
