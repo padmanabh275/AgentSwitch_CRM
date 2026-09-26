@@ -46,45 +46,44 @@ known, "escalated" may mean "recorded, but nobody is notified".
 
 ---
 
-## 3. Should a list price answer a "real BOM price" question? (now urgent)
+## 3. Is `Item.standard_rate` the "real BOM price"?
 
-**Raised:** during design; **escalated in priority 2026-09-26.**
+**Raised:** during design as "escalate the BOM quote, or solve it?".
+**Largely resolved 2026-09-26: solve it.**
 
-**Context:** the design assumed every Item price field was `0.0`, so the quote
-would always escalate. A full read shows **94 of 103 items have a sell-side
-list price**. The agent therefore *quotes* most items from the list price
-(labelled "not a BOM-derived cost"), and escalates only the 9 unpriced ones.
-For the natural demo item, SuryaTools Bench Vice 150mm, it answers 500 ×
-₹5,799 = ₹28,99,500. The brief says the BOM lives in manufacturing, that this
-seat can't reach it, and that the correct behaviour is escalate or refuse,
-never invent. A list price isn't invented, but it isn't the BOM price asked
-for either.
+**Context:** the brief assumed the BOM price was unreachable, so every design
+pass escalated the quote. A full `Item.list` read showed `standard_rate` is a
+read-only field set only on items with a BOM (27 of them). The agent now
+quotes `standard_rate` × qty and escalates only when it's unset. List prices
+are never used in its place.
 
-**Options:**
-1. Keep as is: quote the list price, clearly labelled.
-2. For a "BOM price" request, always escalate, and put the list price in the
-   escalation as context.
-3. Quote the list price *and* escalate for the BOM cost.
+**Still to confirm with the instructor:**
+- that `standard_rate` is the intended field. The synthetic values are odd:
+  it's often far above `selling_price`.
+- that reading it is fine under the brief's "don't sneak cross-app data
+  through embedded fields" rule. It's a documented read-only field on
+  `Item`, which this seat owns.
 
-**Where:** `agent/domain/items.py` → `price_lookup()`; `graph/planner.py`
-(the escalation rule).
+**Where:** `agent/domain/items.py` → `BOM_PRICE_FIELD`, `price_lookup()`.
 
-**Status:** unresolved. Decide before writing the graded tests: it flips the
-expected `quote.outcome` for most items. Ask the instructor if unsure.
+**Status:** implemented; waiting on instructor confirmation.
 
 ---
 
 ## 4. Which item to use for the quote demo?
 
-**Context:** the item used so far (`dd873bd7-…`, Torsion Spring SS304) has
-`is_sellable: 0` and `default_bom_id: null`: no BOM at all. A full `Item.list`
-read (2026-09-26) found a better candidate: **SuryaTools Bench Vice 150mm**
-(`ST-VICE-150`, `bb7dd230-…`): manufactured, sellable, has a
-`default_bom_id`, and it's the product in the "Nashik ITI bulk order, 60
-vices" deal. Under today's rules it gets *quoted* from its list price, so
-which outcome it demonstrates depends on #3.
+**Context:** now that the quote uses `standard_rate`, the demo wants one item
+per outcome:
+- **quoted**: a sellable item with a BOM price, e.g. Toolmaker's Vice 105mm
+  (Mtr) (`SP2319/3567 #3567`, ₹6,02,246.98).
+- **escalated, has a BOM but no BOM price**: SuryaTools Bench Vice 150mm
+  (`ST-VICE-150`). It's also the product in the "Nashik ITI bulk order, 60
+  vices" deal.
+- **escalated, no BOM**: Torsion Spring SS304 (`ASP-H-011`, `dd873bd7-…`),
+  the item used so far.
+- **refused**: a nonexistent id, or an ambiguous name like "bench vice".
 
-**Status:** candidate found; the final choice waits on #3.
+**Status:** candidates picked; confirm they suit the demo.
 
 ---
 

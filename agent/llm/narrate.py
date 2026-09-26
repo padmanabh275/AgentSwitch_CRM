@@ -31,7 +31,9 @@ whether it was answered, escalated, refused, not requested, or failed, and why.
 - If pagination_complete is false, say the list may be incomplete.
 - For at_risk, give the rule used and each deal's reason. Mention how many open \
 deals have no close date (open_without_close_date_ids) — they can't be judged.
-- For an escalated quote, say no price was invented, give the escalation number \
+- For a quoted quote, give the unit BOM price, quantity and total, and say \
+it's before tax and discounts.
+- For an escalated quote, say why there's no BOM price, that no price was invented, give the escalation number \
 if there is one, and say whether an existing escalation was reused. If dry_run \
 is true, say this was a dry run and nothing was actually filed.
 - If there are refusals, state each one and its reason. If not_handled is \

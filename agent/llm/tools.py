@@ -34,10 +34,10 @@ TOOL_SPECS: list[dict] = [
     {
         "name": "attempt_quote",
         "description": (
-            "Try to quote a real price for a quantity of an item, from the "
-            "item's actual sales-visible price fields. If no real price "
-            "exists, this escalates to manufacturing rather than guessing — "
-            "it never invents a number."
+            "Quote a quantity of an item off its real BOM price (the item's "
+            "standard_rate, set by manufacturing's BOM costing). If the item "
+            "has no BOM price, this escalates rather than guessing — it never "
+            "invents a number or substitutes a list price."
         ),
         "input_schema": {
             "type": "object",

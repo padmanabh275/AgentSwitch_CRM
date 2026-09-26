@@ -1,9 +1,17 @@
 """Item lookup, price check and the BOM-quote path. Zero LLM.
 
-No BOM.* tool exists anywhere in this seat's tool list — a structural fact
-confirmed by probing the live tool catalog, not re-checked per call. So a
-quote either comes from a real sales-visible price on the Item record, or
-it's escalated. It never invents a number.
+The BOM price is Item.standard_rate. No BOM.* tool exists for this seat,
+but it doesn't need one: standard_rate is a read-only field on Item
+(listed in `_readonly_fields` alongside default_bom_id and routing_id),
+and on live data (2026-09-26) it is set on 27 items — every one of them
+with a BOM, and never on an item without one. That is manufacturing's BOM
+costing, readable from a Sales-owned entity; which field counts as "the
+BOM price" is still to be confirmed with the instructor.
+
+A quote is standard_rate x qty. When standard_rate is unset (42 of the 69
+items with a BOM, and every item without one), the quote is escalated —
+never filled in from a list price or anything else. It never invents a
+number.
 """
 from __future__ import annotations
 
@@ -12,11 +20,12 @@ import re
 from domain.escalation import file_escalation, quote_subject
 from transport.mcp_client import NOT_FOUND, MCPClient, MCPToolError
 
-# Sell-side price fields, in the order a quote uses them. purchase_rate is
-# deliberately absent: it's what Suryodaya pays, not what it charges.
-PRICE_FIELDS = ("default_rate", "selling_price", "standard_rate", "mrp")
+BOM_PRICE_FIELD = "standard_rate"
+# Shown for context only (in the quote section and an escalation), never
+# quoted: none of them is the BOM price the request asks for.
+LIST_PRICE_FIELDS = ("default_rate", "selling_price", "mrp")
 ITEM_FIELDS = ("id", "name", "code", "uom", "is_sellable", "is_manufactured",
-               "default_bom_id") + PRICE_FIELDS
+               "default_bom_id", BOM_PRICE_FIELD, "standard_rate_updated_at") + LIST_PRICE_FIELDS
 
 
 def get_item(client: MCPClient, item_id: str) -> dict:
@@ -75,11 +84,10 @@ def resolve_item(client: MCPClient, ref: str) -> dict:
 def price_lookup(item_section: dict, qty: int) -> dict:
     """Pure: the quote section for `qty` of an already-fetched item.
 
-    outcome is "quoted" when a price field is set, "unpriced" when none is
-    (the caller decides whether to escalate), "refused" for a bad qty.
-
-    A quoted price is the Item's *list* price — not a BOM-derived cost, and
-    before tax, price breaks or discounts. price_source says which field.
+    outcome is "quoted" when the item has a BOM price (standard_rate),
+    "unpriced" when it doesn't (the caller decides whether to escalate),
+    "refused" for a bad qty. The quote is the BOM price x qty — before tax,
+    margin, price breaks or discounts.
     """
     item_id = item_section["item_id"]
     item = item_section["item"]
@@ -89,18 +97,24 @@ def price_lookup(item_section: dict, qty: int) -> dict:
         return {**base, "outcome": "refused",
                 "reason": f"quantity must be a positive whole number, got {qty!r}"}
 
-    for field in PRICE_FIELDS:
-        v = item.get(field)
-        if v:
-            price = float(v)
-            return {**base, "outcome": "quoted", "unit_price": price,
-                    "total_price": round(price * qty, 2), "price_source": f"Item.{field}",
-                    "reason": (f"list price from Item.{field}; not a BOM-derived cost, "
-                               "excludes tax and discounts")}
+    list_prices = {f: item.get(f) for f in LIST_PRICE_FIELDS if item.get(f)}
+    bom_price = item.get(BOM_PRICE_FIELD)
+    if bom_price:
+        price = float(bom_price)
+        updated = item.get("standard_rate_updated_at")
+        return {**base, "outcome": "quoted", "unit_price": price,
+                "total_price": round(price * qty, 2),
+                "price_source": f"Item.{BOM_PRICE_FIELD}", "price_as_of": updated,
+                "list_prices": list_prices,
+                "reason": (f"BOM price from Item.{BOM_PRICE_FIELD} (manufacturing's BOM "
+                           f"costing{', updated ' + updated if updated else ''}); "
+                           "excludes tax and discounts")}
 
-    return {**base, "outcome": "unpriced",
-            "reason": ("no BOM.* tool available to this seat; sales-visible price "
-                       f"fields ({', '.join(PRICE_FIELDS)}) are unset on item {item_id}")}
+    why = ("has no BOM" if not item.get("default_bom_id")
+           else "has a BOM but no BOM price (standard_rate) set yet")
+    return {**base, "outcome": "unpriced", "list_prices": list_prices,
+            "reason": (f"item {item.get('name') or item_id} {why}, so there's no real BOM "
+                       "price to quote from; list prices aren't a substitute")}
 
 
 def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
@@ -110,7 +124,7 @@ def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
                           subject=quote_subject(priced["item_id"], priced["requested_qty"]),
                           dry_run=dry_run)
     return {**esc, **{k: priced.get(k) for k in ("requested_qty", "item_id", "item_name",
-                                                 "item_code", "reason")}}
+                                                 "item_code", "list_prices", "reason")}}
 
 
 def attempt_quote(client: MCPClient, session_id: str | None, item_ref: str, qty: int,

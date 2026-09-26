@@ -16,8 +16,8 @@ uv sync                                   # Python >=3.10; the agent itself is s
 printf 'EMAIL=...\nSURYODAYA_PW=...\n' > agent/.env   # your seat login (gitignored)
 (cd path/to/glc_v5 && uv run glc serve &) # LLM gateway, port 8111 — see below
 
-uv run python agent/run.py "What closes this month, what's at risk, and quote 500 SuryaTools Bench Vice 150mm?" --dry-run
-uv run python agent/run.py --item ST-VICE-150 --qty 500 --dry-run        # same, without LLM classification
+uv run python agent/run.py "What closes this month, what's at risk, and quote 500 Toolmaker's Vice 105mm (Mtr)?" --dry-run
+uv run python agent/run.py --item "SP2319/3567 #3567" --qty 500 --dry-run   # same, without LLM classification
 ```
 
 A free-text question is classified by the LLM (`llm/intent.py`) into the three
@@ -78,7 +78,7 @@ refuse_1..n (out-of-scope parts) ───────────────�
   branch has finished, whatever state each ended in. A node whose input didn't
   come through is marked `skipped` with the reason, rather than running on bad data.
 - **The graph extends itself.** `RulePlanner` adds `escalate_quote` when the item
-  has no price, and one full `reread_deals` when the snapshot came back
+  has no BOM price, and one full `reread_deals` when the snapshot came back
   incomplete; the nodes that need the new result wait for it.
 - **The prose is checked against the finding.** `llm/verify.py` rejects an
   answer that states an id, escalation number or amount not in the finding, or
@@ -124,25 +124,32 @@ One test decides between them:
 2. **If it is**, but this seat can't do it and a person or another seat can,
    escalate (`AgentEscalation.create`) and say so. Never guess a substitute answer.
 
-**The quote.** No `BOM.*` tool exists in this seat's catalogue, so a BOM-based
-price is never available. The item is looked up by id, code or name. No match
-or several matches are refused ("which one?"), and so is a quote with no
-stated quantity.
-- **If the item has a sell-side list price**, `price_lookup` quotes from it
-  (`default_rate`, `selling_price`, `standard_rate`, `mrp`; never
-  `purchase_rate`, which is a cost) and labels it as a list price, not a BOM
-  cost. **This is 94 of the 103 items on live data** (2026-09-26), including
-  SuryaTools Bench Vice 150mm (₹5,799). Whether a list price should answer a
-  "real BOM price" question at all is open; see `docs/TO_REVISIT.md` #3.
-- **Otherwise** `escalate_quote` files an escalation:
-- The subject is `T6-BOM quote for <qty>x <item_id>`.
-- If an **open** escalation with that exact subject already exists, it's reused
-  rather than filing a duplicate.
-- `reason_code` is `other`: the enum has no value for "my seat can't reach
-  that app" (bug `4e90fc79`).
-- ⚠️ Escalations filed from this seat so far show **no assignee**
-  (`ESC-2026-00026`: `assignee_user_id: null`). Don't assume one reaches
-  Meera Kulkarni until that's resolved; see `docs/TO_REVISIT.md`.
+**The quote is answered, not escalated, whenever a BOM price exists.** The
+BOM price is `Item.standard_rate`. This seat has no `BOM.*` tool, but it doesn't
+need one: `standard_rate` is a read-only field on `Item` (in its
+`_readonly_fields`, next to `default_bom_id` and `routing_id`), and on live
+data it is set on 27 items, all of which have a BOM, and never on an item
+without one. So it's manufacturing's BOM costing, readable from an entity this
+seat owns. (Instructor to confirm this is the intended field.)
+- The item is looked up by id, code or name. No match or several matches are
+  refused ("which one?"), and so is a quote with no stated quantity.
+- **With a BOM price:** the quote is `standard_rate` × qty, before tax and
+  discounts (`price_source: Item.standard_rate`, plus `price_as_of`). E.g.
+  Toolmaker's Vice 105mm (Mtr) has a BOM price of ₹6,02,246.98.
+- **Without one:** 42 of the 69 items with a BOM have no `standard_rate` yet
+  (e.g. SuryaTools Bench Vice 150mm), and items with no BOM have none at all.
+  The quote is escalated. List prices (`default_rate`, `selling_price`, `mrp`)
+  are shown for context but are never quoted in place of the BOM price, and
+  `purchase_rate` (a cost) is never used.
+- **The escalation:**
+  - The subject is `T6-BOM quote for <qty>x <item_id>`.
+  - If an **open** escalation with that exact subject already exists, it's
+    reused rather than filing a duplicate.
+  - `reason_code` is `other`: the enum has no value for "my seat can't reach
+    that app" (bug `4e90fc79`).
+  - ⚠️ Escalations filed from this seat so far show **no assignee**
+    (`ESC-2026-00026`: `assignee_user_id: null`). Don't assume one reaches
+    Meera Kulkarni until that's resolved; see `docs/TO_REVISIT.md`.
 
 **The refusal showcase** is a nonexistent id: `--chat "Look up deal <random uuid>"`,
 or `--item <random uuid>` for the quote. The agent refuses plainly, invents

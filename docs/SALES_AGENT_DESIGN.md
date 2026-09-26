@@ -46,14 +46,18 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
      Seat can → just do it. Seat can't, but a human/another seat plausibly can →
      **escalate** (`AgentEscalation.create`), and tell the user plainly it can't
      produce the number itself, has escalated (with a reference), and won't guess.
-  - The BOM-quote task is the **escalate** branch (quoting is legitimately this
-    agent's job; manufacturing can answer it). It still satisfies the handoff's
-    "refusal showcase" framing at the *content* level — the reply never invents a
-    price — even though the *action* taken is escalate, not a bare refusal.
-    **Not fully settled**: this may be exactly the capability the handoff
-    expects us to solve outright (find a real price some other way), not
-    route around via escalation. Keeping escalate as the BOM answer for now;
-    revisit after instructor clarification.
+  - **Revised 2026-09-26: the BOM quote is answered, not escalated.** The
+    brief assumed the BOM price was unreachable ("expect 403 / no tool →
+    escalate or refuse"), and every design pass inherited that. The "no
+    price" evidence came from a 5-item probe sample with no manufactured
+    items in it. A full `Item.list` read shows the BOM price *is* readable:
+    `Item.standard_rate` (see Platform facts). So the quote is `standard_rate`
+    × qty, and **escalation is the fallback** for items without one, not the
+    main answer. The "never invent a price" rule is unchanged, and the refusal
+    showcase never depended on this (it's the nonexistent-id case below).
+    *(Original reasoning, superseded: the BOM task was the escalate branch;
+    quoting is legitimately this agent's job and manufacturing can answer
+    it.)*
   - **Pure-refuse example — LOCKED**: a nonexistent deal/quote ID (e.g. a
     garbage UUID passed to `get_deal`/`get_lead`). Chosen over the other three
     candidates (commission/payroll question, discount past policy, another
@@ -81,18 +85,35 @@ decisions made *beyond* that brief, and the platform facts that shaped them.
   in this month" or "before today". Consequence: our domain code must
   **paginate every page itself and filter/sum in Python** — never let the LLM
   eyeball a partial page and report a total as if complete.
-- **BOM wall is real and total, not a 403**: no `BOM.*` tool exists anywhere in
-  the live 242-tool list. `Item` records carry `default_bom_id`/`design_bom_id`
-  (bare unresolvable UUIDs) and `is_manufactured`/`routing_id`.
+- **No `BOM.*` tool, but the BOM price is readable anyway**: no `BOM.*` tool
+  exists anywhere in the live 242-tool list, and `Item` records carry
+  `default_bom_id`/`design_bom_id` (bare unresolvable UUIDs) and
+  `is_manufactured`/`routing_id`. **`Item.standard_rate` is the BOM price**
+  (verified 2026-09-26):
+  - it's in every item's `_readonly_fields`, with `standard_rate_updated_at`,
+    `default_bom_id` and `routing_id` (manufacturing-owned values this seat
+    can read but not write);
+  - it's set (non-zero) on 27 items, **all 27 have a BOM, and no item without
+    a BOM has one**;
+  - 42 of the 69 items with a BOM have no `standard_rate` yet → the quote
+    escalates for those;
+  - the synthetic values are odd (Pipe Wrench 302mm: `standard_rate`
+    705,934.01 vs `selling_price` 22,510.79; Toolmaker's Vice 105mm:
+    602,246.98). They're quoted as they are; the agent doesn't second-guess
+    real data.
+  - **Still to confirm with the instructor:** that `standard_rate` is the
+    intended "real BOM price", and that reading it doesn't count as the
+    brief's "sneaking cross-app data through embedded fields" (it's a
+    documented read-only field on an entity this seat owns).
   - ~~Sales-visible price fields are all `0.0` on real sampled data~~ —
     **wrong beyond that sample.** A full read on 2026-09-26: **94 of 103 items**
     have a non-zero price field (`default_rate` 87, `purchase_rate` 88,
     `selling_price` 42, `mrp` 40, `standard_rate` 27); 69 have a
     `default_bom_id`. E.g. SuryaTools Bench Vice 150mm (`ST-VICE-150`,
     manufactured, has a BOM): `default_rate`/`selling_price` 5799, `mrp` 6999,
-    `purchase_rate` 3189.45. So for most items the agent *quotes* a list price
-    rather than escalating — see `TO_REVISIT.md` #3. `purchase_rate` is a
-    cost and is never quoted.
+    `purchase_rate` 3189.45, `standard_rate` 0. List prices are shown for
+    context but never quoted in place of the BOM price; `purchase_rate` is a
+    cost and never used.
   - `Item.list`'s `search` matches name and code, case-insensitively
     ("bench vice" → 2 items, "ASP-H-011" → 1).
 - Escalation mechanism: `AgentEscalation.create` (requires `session_id`, `reason`;
@@ -261,9 +282,9 @@ and S18's harness pattern:
     *does* branch (the escalate-vs-refuse decision tree above), so it needs
     the full set. **None of these four rank above another** — a grader checks
     "did it pick the outcome that matches ground truth for this request," not
-    "did it reach `quoted`." `quoted` is kept in the enum for when/if the BOM
-    wall gets fixed, not because it's the target outcome today; on current
-    live data the only correct value for the BOM-quote task is `escalated`.
+    "did it reach `quoted`." *(Revised 2026-09-26:)* the ground truth depends
+    on the item: `quoted` when it has a `standard_rate`, `escalated` when it
+    doesn't, `refused` for a missing/ambiguous item or quantity.
   `pagination_complete` directly counters bug `a81bd641`'s "partial sum
   indistinguishable from complete" risk. Only `deal_ids`/`outcome` get
   graded, never prose — a verifier re-derives the same lists live and diffs.
@@ -283,6 +304,9 @@ and S18's harness pattern:
     cost); `number`, `status`, `assignee`, `reused_existing` when escalated;
     `dry_run` and `would_file` under `--dry-run`. `outcome: "refused"` also
     covers "no item specified" and a non-positive quantity.
+  - **BOM price (2026-09-26):** a quoted section has `price_source:
+    "Item.standard_rate"` and `price_as_of` (its `standard_rate_updated_at`);
+    quoted and escalated sections both carry `list_prices` for context.
   - **Phase 2:** `quote.outcome: "refused"` also covers an unstated quantity,
     no matching item, and an ambiguous item (with `candidates`); resolved
     quotes carry `item_name`, `item_code`, `query`, `matched_by`. Top level
