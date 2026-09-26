@@ -119,6 +119,9 @@ def main() -> int:
         ap.error("give either a question or --chat, not both")
 
     asks = [a.strip() for a in args.asks.split(",") if a.strip()]
+    unknown = sorted(set(asks) - set(plans.ASKS))
+    if unknown:   # before login, so a typo never leaves a session behind
+        ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
     env = load_env()
     if not env.get("SURYODAYA_PW"):
         raise SystemExit("FATAL: SURYODAYA_PW is empty in agent/.env")

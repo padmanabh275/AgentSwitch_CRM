@@ -110,7 +110,11 @@ def render_template(finding: dict) -> str:
 
 def narrate(query: str, finding: dict) -> NodeOutcome:
     template = render_template(finding)
-    user = f"Question: {query}\n\nFINDING:\n{json.dumps(finding, indent=1, default=str)}"
+    # The facts verify_claims will require, stated up front: without this the
+    # first answer usually omits one and costs a rewrite.
+    required = verify_claims("", finding)["missing"]
+    must = ("\n\nYour answer must state: " + "; ".join(required) + ".") if required else ""
+    user = f"Question: {query}\n\nFINDING:\n{json.dumps(finding, indent=1, default=str)}{must}"
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user}]
     attempts: list[dict] = []

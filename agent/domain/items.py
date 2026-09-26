@@ -41,6 +41,17 @@ def get_item(client: MCPClient, item_id: str) -> dict:
             "item": {k: item.get(k) for k in ITEM_FIELDS}}
 
 
+def _search_terms(ref: str) -> list[str]:
+    """ref, then its singular form if ref ends in -es/-s ("vices" -> "vice")."""
+    terms = [ref]
+    lower = ref.lower()
+    if lower.endswith(("ches", "shes", "xes", "sses")):
+        terms.append(ref[:-2])
+    elif lower.endswith("s") and not lower.endswith("ss"):
+        terms.append(ref[:-1])
+    return terms
+
+
 _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 MAX_CANDIDATES = 20
 
@@ -54,13 +65,20 @@ def resolve_item(client: MCPClient, ref: str) -> dict:
       - no results -> refused ("no item matches ...")
       - several -> refused, listing the candidates ("which one?")
     Picking one of several would risk quoting the wrong part.
+
+    Search is a plain substring match, so "bench vices" finds nothing while
+    "bench vice" finds two. If a plural-looking reference matches nothing,
+    it's retried once in the singular before refusing.
     """
     ref = ref.strip()
     if _UUID.fullmatch(ref):
         return {**get_item(client, ref), "query": ref, "matched_by": "id"}
 
-    page = client.call("Item.list", {"search": ref, "limit": MAX_CANDIDATES})
-    rows = page.get("data") or []
+    for term in _search_terms(ref):
+        page = client.call("Item.list", {"search": term, "limit": MAX_CANDIDATES})
+        rows = page.get("data") or []
+        if rows:
+            break
     exact = [r for r in rows
              if ref.casefold() in ((r.get("name") or "").casefold(), (r.get("code") or "").casefold())]
     chosen = exact if len(exact) == 1 else rows if len(rows) == 1 else None
