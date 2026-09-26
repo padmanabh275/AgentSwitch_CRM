@@ -1,0 +1,18 @@
+[project]
+name = "agentswitch-sales-agent"
+version = "0.1.0"
+description = "Team 6 Sales/Pipeline agent for AgentSwitch (Suryodaya Precision Works)"
+requires-python = ">=3.10"
+dependencies = []  # the agent itself is stdlib-only
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false  # a script-style app, not an installable package
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The agent uses script-style imports (`from domain import deals`).
+pythonpath = ["agent"]
+addopts = ["-ra"]
