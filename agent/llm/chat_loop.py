@@ -8,6 +8,7 @@ follow-ups the fixed plan doesn't cover. Run via `run.py --chat "..."`.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 
@@ -49,10 +50,10 @@ _SECTION_FOR_TOOL = {"list_closing_this_month": "closing_this_month",
 
 
 def run(query: str, session_id: str | None, client: MCPClient,
-        dry_run: bool = False) -> tuple[str, dict, list[dict]]:
+        dry_run: bool = False, today: dt.date | None = None) -> tuple[str, dict, list[dict]]:
     """Returns (answer, collected finding sections, trace of tool calls).
     Raises LLMError if the gateway fails; the caller records it."""
-    dispatch = tools.build_dispatch(client, session_id, dry_run=dry_run)
+    dispatch = tools.build_dispatch(client, session_id, dry_run=dry_run, today=today)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": query},

@@ -34,6 +34,7 @@ class TaskRun:
     task_id: str                # "pipeline_review" | "chat"
     prompt: str
     dry_run: bool
+    today: str | None = None     # set only when pinned with --today
     session_id: str | None = None
     steps: list[Step] = field(default_factory=list)
     answer: str | None = None

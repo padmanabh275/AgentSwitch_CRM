@@ -7,6 +7,7 @@ audited wrapper over domain/.
 """
 from __future__ import annotations
 
+import datetime as dt
 from typing import Callable
 
 from domain import deals, escalation, items, records
@@ -97,14 +98,14 @@ TOOL_SPECS: list[dict] = [
 ]
 
 
-def build_dispatch(client: MCPClient, session_id: str | None,
-                   dry_run: bool = False) -> dict[str, Callable[[dict], dict]]:
+def build_dispatch(client: MCPClient, session_id: str | None, dry_run: bool = False,
+                   today: dt.date | None = None) -> dict[str, Callable[[dict], dict]]:
     """name -> callable(arguments dict) -> result dict, bound to this run's
     client/session. dry_run suppresses the one write the LLM can trigger
     (AgentEscalation.create); reads still happen."""
     return {
-        "list_closing_this_month": lambda args: deals.list_closing_this_month(client),
-        "list_at_risk": lambda args: deals.list_at_risk(client),
+        "list_closing_this_month": lambda args: deals.list_closing_this_month(client, today),
+        "list_at_risk": lambda args: deals.list_at_risk(client, today),
         "attempt_quote": lambda args: items.attempt_quote(
             client, session_id, args["item_id"], int(args["qty"]), dry_run=dry_run),
         "file_escalation": lambda args: escalation.file_escalation(

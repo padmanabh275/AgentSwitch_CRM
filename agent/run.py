@@ -9,8 +9,12 @@ Two paths:
 
 Usage:
     python3 run.py [--item-id ITEM_ID] [--qty 500]
-                   [--asks closing_this_month,at_risk,quote] [--dry-run]
+                   [--asks closing_this_month,at_risk,quote] [--today YYYY-MM-DD]
+                   [--dry-run]
     python3 run.py --chat "Look up deal <id>" [--dry-run]
+
+--today: pin the date "this month" and "overdue" are judged against, for
+reproducible runs (the deal data itself is still live).
 
 --dry-run: reads still hit live data; nothing is written (no session,
 escalation or memory). Every run leaves runs/<run_id>/taskrun.json and,
@@ -76,7 +80,7 @@ def run_graph(ctx: RunContext, run: TaskRun, asks: list[str], item_id: str | Non
 
 def run_chat(ctx: RunContext, run: TaskRun) -> None:
     answer, collected, trace = chat_loop.run(ctx.query, ctx.session_id, ctx.client,
-                                             dry_run=ctx.dry_run)
+                                             dry_run=ctx.dry_run, today=ctx.today)
     run.answer, run.answer_source = answer, "llm"
     run.steps = [Step(target=t["tool"], kind="tool", status=t["outcome"] or "unknown",
                       reason=t["reason"], seconds=t["seconds"]) for t in trace]
@@ -93,6 +97,8 @@ def main() -> int:
                     help=f"comma-separated subset of {','.join(plans.ASKS)}")
     ap.add_argument("--chat", default=None, metavar="QUESTION",
                     help="free-form question via the LLM tool loop instead of the graph")
+    ap.add_argument("--today", type=dt.date.fromisoformat, default=None, metavar="YYYY-MM-DD",
+                    help="pin 'today' for closing/at-risk (default: today on the IST calendar)")
     ap.add_argument("--dry-run", action="store_true",
                     help="read live data but write nothing (no session, escalation or memory)")
     args = ap.parse_args()
@@ -105,7 +111,8 @@ def main() -> int:
     run_id = dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
     query = args.chat or build_query(asks, args.item_id, args.qty)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
-                  prompt=query, dry_run=args.dry_run)
+                  prompt=query, dry_run=args.dry_run,
+                  today=args.today.isoformat() if args.today else None)
     run_dir = RUNS_DIR / run_id
     t0 = time.time()
 
@@ -121,7 +128,7 @@ def main() -> int:
           f"{' · session ' + run.session_id if run.session_id else ''}] {query}\n")
 
     ctx = RunContext(client=client, run_id=run_id, session_id=run.session_id,
-                     query=query, dry_run=args.dry_run)
+                     query=query, dry_run=args.dry_run, today=args.today)
     try:
         if args.chat:
             run_chat(ctx, run)
