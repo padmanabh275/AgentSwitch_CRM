@@ -50,6 +50,10 @@ def build_finding(args: dict, outcomes: dict[str, NodeOutcome], ctx: "RunContext
             finding[name] = {"outcome": "not_requested"}
         else:
             finding[name] = _section(args["sections"][name], outcomes)
+    # Out-of-scope parts refused at planning time, and an in-scope part the
+    # plan doesn't cover. Always present, so the shape doesn't vary.
+    finding["refusals"] = [outcomes[i].data for i in args.get("refusals", []) if i in outcomes]
+    finding["not_handled"] = args.get("not_handled")
     finding.update({
         "run_id": ctx.run_id,
         "session_id": ctx.session_id,

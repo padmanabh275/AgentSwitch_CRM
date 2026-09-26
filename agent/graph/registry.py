@@ -21,7 +21,7 @@ from domain import deals, items
 from graph.finding import build_finding
 from graph.outcome import ANSWERED, NodeOutcome
 from llm import narrate
-from transport.mcp_client import MCPClient
+from transport.mcp_client import MCPClient, MCPToolError
 
 
 @dataclass
@@ -46,20 +46,47 @@ def _data(outcomes: dict[str, NodeOutcome], node_id: str) -> dict:
     return outcomes[node_id].data
 
 
+def _first_answered(outcomes: dict[str, NodeOutcome], node_ids: str | list[str]) -> dict:
+    """Data of the first listed node that answered — e.g. a planner-added
+    re-read of the deals ahead of the original read."""
+    for node_id in [node_ids] if isinstance(node_ids, str) else node_ids:
+        out = outcomes.get(node_id)
+        if out is not None and out.status == ANSWERED:
+            return out.data
+    raise ValueError(f"none of {node_ids} answered")
+
+
+def _reread_deals(ctx: RunContext, previous: dict) -> dict:
+    """A second full read after an incomplete one. It never fails the
+    branch: if the re-read errors, the first (partial, flagged) read stands."""
+    try:
+        fresh = deals.snapshot_deals(ctx.client)
+    except MCPToolError as e:
+        return {**previous, "reread_error": f"{e.code}: {e}"}
+    return {**fresh, "reread": True}
+
+
 REGISTRY: dict[str, NodeDef] = {
     "snapshot_deals": NodeDef(
         fn=lambda ctx, a, o: deals.snapshot_deals(ctx.client),
         description="Read every Deal once (paginated, deduped).",
         retries=2),
+    "reread_deals": NodeDef(
+        fn=lambda ctx, a, o: _reread_deals(ctx, _data(o, a["previous"])),
+        description="Re-read every Deal once after an incomplete snapshot."),
     "closing_this_month": NodeDef(
-        fn=lambda ctx, a, o: deals.closing_this_month(_data(o, a["snapshot"]), ctx.today),
+        fn=lambda ctx, a, o: deals.closing_this_month(_first_answered(o, a["snapshot"]), ctx.today),
         description="Open deals closing in the current IST month."),
     "at_risk": NodeDef(
-        fn=lambda ctx, a, o: deals.at_risk(_data(o, a["snapshot"]), ctx.today),
+        fn=lambda ctx, a, o: deals.at_risk(_first_answered(o, a["snapshot"]), ctx.today),
         description="Open deals whose close date has passed."),
     "get_item": NodeDef(
         fn=lambda ctx, a, o: items.get_item(ctx.client, a["item_id"]),
         description="Item.get; refuses on not_found.",
+        retries=2),
+    "resolve_item": NodeDef(
+        fn=lambda ctx, a, o: items.resolve_item(ctx.client, a["ref"]),
+        description="Find the item by id, code or name; refuses on no/ambiguous match.",
         retries=2),
     "price_lookup": NodeDef(
         fn=lambda ctx, a, o: items.price_lookup(_data(o, a["item"]), a["qty"]),

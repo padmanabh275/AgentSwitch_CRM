@@ -29,9 +29,14 @@ class LLMError(Exception):
 
 def call_llm(messages: list[dict], tools: list[dict] | None = None,
              tool_choice: str = "auto", max_tokens: int = 1024,
-             temperature: float = 0.0, provider: str | None = GLC_PROVIDER) -> dict:
+             temperature: float = 0.0, provider: str | None = GLC_PROVIDER,
+             response_schema: dict | None = None) -> dict:
     """POST /v1/chat. Returns the parsed ChatResponse dict (text, tool_calls,
     stop_reason, ...). tools is a list of {"name","description","input_schema"}.
+
+    response_schema asks the gateway for JSON matching that schema (glc_v5's
+    response_format; native responseSchema on Gemini). The object comes back
+    in `parsed` — callers must still validate it.
     """
     payload = {
         "messages": messages,
@@ -41,6 +46,8 @@ def call_llm(messages: list[dict], tools: list[dict] | None = None,
     }
     if provider:
         payload["provider"] = provider
+    if response_schema:
+        payload["response_format"] = {"type": "json_schema", "schema": response_schema}
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = tool_choice

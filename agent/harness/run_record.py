@@ -31,10 +31,11 @@ class Step:
 @dataclass
 class TaskRun:
     run_id: str
-    task_id: str                # "pipeline_review" | "chat"
+    task_id: str                # "pipeline_review" | "chat" (the path that answered)
     prompt: str
     dry_run: bool
     today: str | None = None     # set only when pinned with --today
+    intent: dict | None = None   # parse_request's classification, for a free-text question
     session_id: str | None = None
     steps: list[Step] = field(default_factory=list)
     answer: str | None = None
