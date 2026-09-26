@@ -52,7 +52,8 @@ def build_query(asks: list[str], item_id: str | None, qty: int) -> str:
         parts.append("what is at risk")
     if "quote" in asks:
         parts.append(f"quote {qty} units of item {item_id or '(unspecified)'} off the real BOM price")
-    return (", and ".join(parts) + "?").capitalize()
+    query = ", and ".join(parts) + "?"
+    return query[0].upper() + query[1:]  # not .capitalize(): it lowercases "BOM"
 
 
 def run_graph(ctx: RunContext, run: TaskRun, asks: list[str], item_id: str | None,
