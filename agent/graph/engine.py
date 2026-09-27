@@ -23,7 +23,6 @@ live_graph), with the changes this seat needs:
 """
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +30,7 @@ from typing import Protocol
 
 from graph.outcome import ANSWERED, ERROR, SKIPPED, NodeOutcome
 from graph.registry import REGISTRY, RunContext
+from harness.run_record import write_json
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 MAX_NODES = 30
@@ -178,8 +178,7 @@ class GraphStore:
     def checkpoint(self) -> None:
         if not self.checkpoint_path:
             return
-        self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_path.write_text(json.dumps(self.to_dict(), indent=2, default=str))
+        write_json(self.checkpoint_path, self.to_dict())
 
     def to_dict(self) -> dict:
         return {"format": CHECKPOINT_FORMAT, "run_id": self.run_id,

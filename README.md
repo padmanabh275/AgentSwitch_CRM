@@ -36,9 +36,16 @@ grading.
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
 | `--chat "question"` | Straight to the LLM tool loop, skipping classification. |
 
-Every run writes `runs/<run_id>/taskrun.json` (steps, finding, answer, warnings)
-and, for the graph path, `runs/<run_id>/graph.json` (every node's full output,
-including the deal snapshot). `runs/` is gitignored.
+Every run writes `runs/<run_id>/taskrun.json` (steps, finding, answer,
+warnings; saved first with `ended: "running"`, so a crash still leaves a
+record), `calls.jsonl` (every MCP call as the transport saw it) and either
+`graph.json` (every node's full output, including the deal snapshot) or, for
+the chat path, `chat_trace.json` (each tool's arguments and full result).
+`runs/` is gitignored.
+
+Credentials come from `agent/.env`, then the repo's `.env`: `EMAIL` +
+`SURYODAYA_PW` (password login, renewed on a 401), or a bearer `TOKEN`
+(used as is; `AS` overrides the base URL).
 
 **LLM gateway.** LLM calls go through `glc_v5`, a separate local repo (`GLC_URL`, default `http://127.0.0.1:8111`). It's pinned to the `gemini`
 provider (`GLC_PROVIDER`): unpinned, it picks a local Ollama model that writes
@@ -168,6 +175,64 @@ is saved **before** any of these, and a failed platform write becomes a warning,
 never a lost run. There's no `AgentMessage.create` tool for this seat, so the
 full trace lives in `runs/`.
 
+## Harness
+
+Its own loop, a task set with verifiers that read the platform rather than
+the agent's prose, and every run written to disk before anything is scored.
+
+```bash
+cd agent
+uv run python -m harness.runner                 # all tasks, every run --dry-run
+uv run python -m harness.runner --tasks at_risk,quote_no_bom --skip-llm
+uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
+```
+
+**Run, then score, never both at once.** For each task the runner:
+
+1. reads the platform state the task's verifiers need, with its **own**
+   login → `ground_truth_before.json`;
+2. runs the agent exactly as a person would, `run.py <argv> --today <pinned>
+   --run-id ... --dry-run`, in a subprocess → `taskrun.json`, `calls.jsonl`,
+   `graph.json` / `chat_trace.json`, `stdout.txt`;
+3. reads the platform again → `ground_truth_after.json`;
+
+and records the batch in `runs/batches/<batch_id>/manifest.json`. `score.py`
+then reads only those files and writes `score.json` per run and `report.md`
+per batch. A scorer fix is applied by re-scoring saved runs, not by paying
+for new live ones. `--write` lets runs write to the platform (off by
+default); tasks needing the LLM are skipped when the gateway is down.
+
+**Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
+`id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
+outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
+closing this month, at risk, the composite question, all three quote
+outcomes (quoted, escalated with and without a BOM), four refusals
+(nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
+four refusals from the week-one gaps (invoice, email, merge, commission),
+where refusal is correct because the platform has no tool for it.
+
+**Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
+raw rows, not imported from `domain/`, and the agent's own snapshot is never
+ground truth, so a bug in the agent can't pass its own check.
+
+| Verifier | Checks against the platform |
+|---|---|
+| `deal_set_matches_db` | deal ids and per-currency total vs the rule applied to `Deal.list`; at-risk reasons and `days_overdue` |
+| `quote_matches_db` | the outcome the item's data calls for (`standard_rate` set → quoted, unset → escalated, missing/ambiguous → refused); total = `standard_rate` × qty; no price on an escalation or refusal |
+| `escalation_effect` | a claimed escalation exists (or was reused, or in a dry run only `would_file`s) with the `T6-BOM quote for …` subject; nothing filed otherwise |
+| `record_absent` | the id really is `not_found`, and the chat trace refused it |
+| `tools_absent` | `tools/list` has no tool for the request, and none was called |
+| every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode); T6 session and escalation counts didn't grow in a dry run |
+
+Check statuses are `pass`, `fail`, `drift`, `skip` or `error`. **Drift:** the
+book is shared with Team 07, so an id in only one of the two sets is `drift`,
+not `fail`, when the deal moved during the run (classified differently before
+and after, gone, or `updated_at` later than the agent's `snapshot_at`).
+`error` means ground truth couldn't be read (e.g. an expired token) or the
+task's premise doesn't hold on live data; it counts as not passing. A task
+fails on any `fail` or `error`, is `drift` if drift is the only problem, and
+otherwise passes.
+
 ## Repo layout
 
 ```
@@ -178,7 +243,8 @@ agent/
   domain/           deals, items, escalation, records: no LLM, pure where possible
   graph/            engine, registry (the allowlist), plans, planner, finding
   llm/              intent (classify), narrate, verify, chat_loop, tools (its curated menu)
-  harness/          run_record (TaskRun), persist (platform writes)
+  harness/          run_record (TaskRun), persist (platform writes), call_log,
+                    tasks.json, verifiers, runner, score
 docs/               design notes, brief, recon, bug register
 tests/              hand-written tests go here
 ```
@@ -219,6 +285,9 @@ snapshot saved in that run's `graph.json`, not fixed ids: the live book changes.
   looked up by name or code, the prose checked against the finding (one
   rewrite, then the template), out-of-scope parts refused, an incomplete
   snapshot re-read once. Checked in live dry runs and offline.
+- **Harness (done):** task set, platform-reading verifiers, runner and
+  offline scorer (see *Harness*). Batch `20260928T040529` passes 13/13 tasks
+  (129/129 checks) against the live book, in a dry run.
 - **Phase 3:** pause a run until an escalation is answered, then resume it
   (AgentTask plus `--resume`); an LLM planner limited to the registry; a
   richer at-risk rule.

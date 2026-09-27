@@ -3,7 +3,8 @@
 Seat `team06@theschoolofai.in` · Pipeline/crm · Suryodaya
 `https://agentswitch.theschoolofai.in` · company `5cbe5a55-af74-4363-a436-f5350593114c`
 
-**20 reports on file, all status `new`.** 11 filed 2026-09-22 in the gap-analysis session.
+**22 reports on file, all status `new`** (checked live 2026-09-28). 11 filed 2026-09-22 in the
+gap-analysis session. **10 more are drafted and not yet filed**; see *Drafts pending review* below.
 Live source of truth: `GET /api/bug-report/mine` (saved to `out/suryodaya/bugreport_mine_final.json`).
 Report drafts in `drafts/`. `BugReport` has no `update`, so nothing here can be edited after filing.
 
@@ -33,7 +34,7 @@ self-correcting (`UNHAPPY_PATHS.md`). Nothing below blocks us from starting to b
 |---|---|---|---|
 | 1 | `2e4d571b` | contact anybody, on any channel | none |
 | 2 | `a81bd641` | answer "what's the pipeline worth" | 7+ calls, unverifiable arithmetic |
-| 3 | `5f44fa94` | trust any lead search it runs | none — failure is invisible |
+| 3 | `5f44fa94` | trust any lead search it runs | none — failure is invisible *(no longer reproduces, 09-28)* |
 | 4 | `a6899ff7` / `791d32e3` | tax a quote or order correctly | use record-level `taxes[]` |
 | 5 | `df88720f` | be trusted with billing state | never write the field |
 | 6 | `ffffe122` | avoid forking the customer list | search-before-create, best effort |
@@ -165,7 +166,7 @@ tell "no match" from "this entity's search doesn't cover that field".
 
 ---
 
-## Earlier reports — 9 (5 summarised without detail, see note below)
+## Earlier and later reports — 11 (5 summarised without detail, see note below)
 
 | Date | id | Finding |
 |------|----|---------|
@@ -173,7 +174,9 @@ tell "no match" from "this entity's search doesn't cover that field".
 | 09-17 | `8ae6f7c8` | Deal transitions ignore their source-stage guard ⚠️ **see below** |
 | 09-17 | `17e054a8` | Lead transitions ignore their source-status guard ⚠️ **see below** |
 | 09-18 | `cc1823e3` | Clicking on domain does nothing (UI) |
-| 09-22 | `62fa027c` | Live `tools/list` is 238, not the saved 247 |
+| 09-22 | `62fa027c` | Live `tools/list` is 238, not the saved 247 (now 242 as of 09-28) |
+| — | `4e90fc79` | `reason_code` has no value that means anything across apps |
+| 09-28 | `87d456e5` | `Deal.update` advertises `stage` as writable, then rejects every value, including legal ones |
 
 
 > **Note on scope.** Five reports covering seat isolation and cross-app access are summarised
@@ -193,7 +196,31 @@ transition against a `closed_lost` deal. Each returned `invalid_transition` with
 Either these were fixed after 17 Sep or the original repro differed. **Re-check before citing them
 to the app owner.** Evidence: `out/suryodaya/unhappy/` and `UNHAPPY_PATHS.md`.
 
+## Drafts pending review — live bug hunt, 2026-09-28
+
+Full drafts, evidence and the ruled-out list are in `bug-hunt-2026-09-28.md`. **None are filed.**
+Read each one before `BugReport.create`, since filed reports cannot be edited.
+
+| # | Draft | Severity |
+|---|---|---|
+| D1 | `Deal.create` accepts `stage: "closed_won"`, bypassing every transition guard | high |
+| D2 | `sort_order` on `Item`/`Pipeline`/`AddressBook.list`: every legal value is a 500 | high |
+| D3 | List schemas advertise create-time defaults and placeholders on filters (`Deal.list` goes to 0 of 143) | high |
+| D4 | `AgentSession.update` stores negative tool-call, token and cost counters | medium |
+| D5 | `Deal.create` accepts any currency string (`ZZZ`) | medium |
+| D6 | `AgentProvider.list` `provider` enum allows 1 of the 7 providers that exist | medium |
+| D7 | `ContactGroupMember.list` ignores `search` (same class as `5f44fa94`) | medium |
+| D8 | Guard and validation errors carry no error code, and point to REST paths, not tools | medium |
+| D9 | An escalation created without `channel` is never raised, routed or given an SLA | medium; needs one controlled repro first |
+| D10 | `87d456e5` generalises to five more entities | low; follow-up to `87d456e5` |
+
 ## Claims in our own register that no longer hold
+
+**Re-checked 2026-09-28:**
+
+- **`5f44fa94` (Lead search ignored) no longer reproduces.** Nonsense search returns `total: 0`.
+- **`a81bd641`'s "paged at 20 (max 50)"** is out of date. `limit` now goes to 1000, and one call
+  returns all 143 deals or all 312 orders. The aggregate gap itself stands.
 
 Verified against the live 238-tool catalog on 2026-09-22 — strike these before the register goes out:
 
@@ -215,4 +242,6 @@ No delete tool on this seat, so these persist. Team 07 shares this book.
 
 `QTN-2026-00058` · `QTN-2026-00059` · `QTN-2026-00060` · `SO-2026-00236` · `SO-2026-00237`
 (deliberately left with a false `invoiced_status` so `df88720f` can be verified) · plus `T6-unhappy-*`
-and `T6-chainwalk-*` leads and deals.
+and `T6-chainwalk-*` leads and deals · plus the 2026-09-28 hunt's `T6-hunt-*` records: a party, a
+`ZZZ`-currency deal, a `closed_won` INR 1 deal and a session with negative counters (ids in
+`bug-hunt-2026-09-28.md`).

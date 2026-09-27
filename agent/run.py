@@ -26,10 +26,15 @@ Usage:
 reproducible runs (the deal data itself is still live).
 
 --dry-run: reads still hit live data; nothing is written (no session,
-escalation or memory). Every run leaves runs/<run_id>/taskrun.json and,
-for the graph path, runs/<run_id>/graph.json.
+escalation or memory). Every run leaves runs/<run_id>/taskrun.json (saved
+first with ended="running"), calls.jsonl (every MCP call made), and
+graph.json (graph path) or chat_trace.json (chat path).
 
-Requires EMAIL / SURYODAYA_PW in agent/.env, and glc_v5 running locally
+--run-id / --task-id: set by the harness (harness/runner.py) so it knows
+where the run lands and which task it was.
+
+Requires EMAIL / SURYODAYA_PW (or a bearer TOKEN) in agent/.env or the
+repo's .env, and glc_v5 running locally
 (`uv run glc serve`) for LLM steps — the graph path still answers from its
 template if the gateway is down.
 """
@@ -38,6 +43,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import time
 import uuid
 
@@ -48,10 +54,13 @@ from graph.engine import Engine
 from graph.planner import RulePlanner
 from graph.registry import RunContext
 from harness import persist
-from harness.run_record import Step, TaskRun
+from harness.call_log import LoggedClient
+from harness.run_record import Step, TaskRun, write_json
 from llm import chat_loop
 from llm.intent import IntentError, parse_request
-from transport.mcp_client import MCPClient, SURYODAYA
+from transport.mcp_client import client_from_env
+
+RUN_ID_RE = re.compile(r"[\w.-]+")
 
 
 def build_query(asks: list[str], item: str | None, qty: int) -> str:
@@ -91,6 +100,7 @@ def run_graph(ctx: RunContext, run: TaskRun, plan_args: dict) -> None:
 def run_chat(ctx: RunContext, run: TaskRun) -> None:
     answer, collected, trace = chat_loop.run(ctx.query, ctx.session_id, ctx.client,
                                              dry_run=ctx.dry_run, today=ctx.today)
+    write_json(RUNS_DIR / run.run_id / "chat_trace.json", trace)
     run.answer, run.answer_source = answer, "llm"
     run.steps += [Step(target=t["tool"], kind="tool", status=t["outcome"] or "unknown",
                        reason=t["reason"], seconds=t["seconds"]) for t in trace]
@@ -114,24 +124,34 @@ def main() -> int:
                     help="pin 'today' for closing/at-risk (default: today on the IST calendar)")
     ap.add_argument("--dry-run", action="store_true",
                     help="read live data but write nothing (no session, escalation or memory)")
+    ap.add_argument("--run-id", default=None,
+                    help="use this run id (the harness sets it); default: timestamp + random")
+    ap.add_argument("--task-id", default=None,
+                    help="harness task id to record on the run (tasks.json)")
     args = ap.parse_args()
     if args.question and args.chat:
         ap.error("give either a question or --chat, not both")
+    if args.run_id and not RUN_ID_RE.fullmatch(args.run_id):
+        ap.error("--run-id may only contain letters, digits, '.', '_' and '-'")
 
     asks = [a.strip() for a in args.asks.split(",") if a.strip()]
     unknown = sorted(set(asks) - set(plans.ASKS))
     if unknown:   # before login, so a typo never leaves a session behind
         ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
     env = load_env()
-    if not env.get("SURYODAYA_PW"):
-        raise SystemExit("FATAL: SURYODAYA_PW is empty in agent/.env")
+    if not (env.get("SURYODAYA_PW") or env.get("TOKEN")):
+        raise SystemExit("FATAL: no credentials — set EMAIL + SURYODAYA_PW (or TOKEN) "
+                         "in agent/.env or the repo's .env")
 
-    run_id = dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
+                             + "-" + uuid.uuid4().hex[:6])
     query = args.chat or args.question or build_query(asks, args.item, args.qty)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
                   prompt=query, dry_run=args.dry_run,
-                  today=args.today.isoformat() if args.today else None)
+                  today=args.today.isoformat() if args.today else None,
+                  harness_task=args.task_id, ended="running")
     run_dir = RUNS_DIR / run_id
+    run.save(run_dir)  # on disk from the start: a crash leaves ended="running", not nothing
     t0 = time.time()
 
     plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty}
@@ -154,7 +174,14 @@ def main() -> int:
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")}
 
-    client = MCPClient(env.get("EMAIL", ""), env["SURYODAYA_PW"], base_url=SURYODAYA)
+    try:
+        client = LoggedClient(client_from_env(env), run_dir / "calls.jsonl")
+    except RuntimeError as e:  # login failed: nothing ran, but the record says why
+        run.ended, run.error = "error", str(e)
+        run.seconds = round(time.time() - t0, 2)
+        path = run.save(run_dir)
+        print(f"FATAL: {e}\n[run record: {path}]")
+        return 1
     if not args.dry_run:
         try:
             run.session_id = persist.open_session(client)
@@ -177,6 +204,8 @@ def main() -> int:
             run_graph(ctx, run, plan_args)
     except Exception as e:  # record it; the run file is the evidence either way
         run.ended, run.error = "error", f"{type(e).__name__}: {e}"
+    if run.ended == "running":
+        run.ended = "done"
     run.seconds = round(time.time() - t0, 2)
     path = run.save(run_dir)  # local record first, before any platform write
 
