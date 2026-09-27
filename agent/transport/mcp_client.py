@@ -53,12 +53,14 @@ class MCPToolError(Exception):
 
 class MCPClient:
     def __init__(self, email: str, password: str, base_url: str = SURYODAYA,
-                 timeout: float = 30):
-        self.base_url = base_url
+                 timeout: float = 30, token: str | None = None):
+        """Logs in with email/password, or uses a bearer `token` as given.
+        A token-only client can't renew itself: a 401 is raised as `auth`."""
+        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._email = email
         self._password = password
-        self.token = self._login()
+        self.token = token or self._login()
 
     def _login(self) -> str:
         body = json.dumps({"email": self._email, "password": self._password}).encode()
@@ -90,15 +92,34 @@ class MCPClient:
         try:
             return self._call_once(name, arguments)
         except MCPToolError as e:
-            if e.code != AUTH:
+            if e.code != AUTH or not self._password:
                 raise
             self.token = self._login()
             return self._call_once(name, arguments)
 
+    def list_tools(self) -> list[dict]:
+        """tools/list: the tools this seat can see (caller-scoped), all pages."""
+        tools: list[dict] = []
+        cursor = None
+        for _ in range(20):
+            params = {"cursor": cursor} if cursor else {}
+            result = self._rpc("tools/list", params, "tools/list")
+            tools += result.get("tools") or []
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+        return tools
+
     def _call_once(self, name: str, arguments: dict | None) -> dict:
+        result = self._rpc("tools/call", {"name": name, "arguments": arguments or {}}, name)
+        if result.get("isError"):
+            raise MCPToolError(f"{name}: {json.dumps(result)[:300]}", {"result": result},
+                               code=UNKNOWN)
+        return result.get("structuredContent", {})
+
+    def _rpc(self, method: str, params: dict, name: str) -> dict:
         body = json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": name, "arguments": arguments or {}},
+            "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
         }).encode()
         req = urllib.request.Request(
             self.base_url + "/api/mcp", data=body, method="POST",
@@ -128,7 +149,16 @@ class MCPClient:
             raise MCPToolError(f"{name}: {err.get('message', '')}"[:500], d,
                                code=data.get("code", UNKNOWN),
                                errors=data.get("errors", []))
-        result = d.get("result", {})
-        if result.get("isError"):
-            raise MCPToolError(f"{name}: {json.dumps(result)[:300]}", d, code=UNKNOWN)
-        return result.get("structuredContent", {})
+        return d.get("result") or {}
+
+
+def client_from_env(env: dict) -> MCPClient:
+    """Password login (EMAIL + SURYODAYA_PW) if set, else the bearer TOKEN.
+    AS overrides the base URL. Raises RuntimeError if neither is present."""
+    base = env.get("AS") or SURYODAYA
+    if env.get("SURYODAYA_PW"):
+        return MCPClient(env.get("EMAIL", ""), env["SURYODAYA_PW"], base_url=base)
+    if env.get("TOKEN"):
+        return MCPClient(env.get("EMAIL", ""), "", base_url=base, token=env["TOKEN"])
+    raise RuntimeError("no AgentSwitch credentials: set EMAIL + SURYODAYA_PW, or TOKEN, "
+                       "in agent/.env or the repo's .env")

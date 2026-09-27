@@ -86,7 +86,8 @@ def run(query: str, session_id: str | None, client: MCPClient,
                     result = {"outcome": "error", "error_code": getattr(e, "code", None),
                               "reason": str(e)}
             trace.append({"tool": name, "arguments": args, "outcome": result.get("outcome"),
-                          "reason": result.get("reason"), "seconds": round(time.time() - t0, 2)})
+                          "reason": result.get("reason"), "seconds": round(time.time() - t0, 2),
+                          "result": result})
             if name in _SECTION_FOR_TOOL:
                 collected[_SECTION_FOR_TOOL[name]] = result
             messages.append({

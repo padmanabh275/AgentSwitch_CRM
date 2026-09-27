@@ -1,0 +1,148 @@
+{
+  "format": "t6-tasks-v1",
+  "today": "2026-09-28",
+  "tasks": [
+    {
+      "id": "closing_this_month",
+      "description": "Open deals whose expected close date falls in the pinned IST month.",
+      "argv": ["--asks", "closing_this_month"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "answered", "at_risk": "not_requested", "quote": "not_requested"}},
+      "verifiers": [
+        {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}}
+      ]
+    },
+    {
+      "id": "at_risk",
+      "description": "Open deals whose expected close date has passed, each with a reason.",
+      "argv": ["--asks", "at_risk"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "answered", "quote": "not_requested"}},
+      "verifiers": [
+        {"name": "deal_set_matches_db", "params": {"section": "at_risk"}}
+      ]
+    },
+    {
+      "id": "composite_quoted",
+      "description": "The seat's full question: closing, at risk, and 500 units of an item that has a BOM price.",
+      "argv": ["--item", "SP2319/3567 #3567", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "answered", "at_risk": "answered", "quote": "quoted"}},
+      "verifiers": [
+        {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
+        {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
+        {"name": "quote_matches_db", "params": {"ref": "SP2319/3567 #3567", "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "quote_bom_unpriced",
+      "description": "Item has a BOM but no standard_rate: escalate, never quote a list price.",
+      "argv": ["--asks", "quote", "--item", "ST-VICE-150", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "escalated"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "ST-VICE-150", "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "quote_no_bom",
+      "description": "Item has no BOM at all: escalate.",
+      "argv": ["--asks", "quote", "--item", "ASP-H-011", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "escalated"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "ASP-H-011", "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_nonexistent_item",
+      "description": "An item id that does not exist: refuse, file nothing.",
+      "argv": ["--asks", "quote", "--item", "7e57c0de-0000-4000-8000-000000000006", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "7e57c0de-0000-4000-8000-000000000006", "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_ambiguous_item",
+      "description": "A name that matches several items: refuse and ask which one.",
+      "argv": ["--asks", "quote", "--item", "bench vice", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "bench vice", "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_quote_no_item",
+      "description": "A quote with no item named: refuse, never guess one.",
+      "argv": ["--asks", "quote", "--qty", "500"],
+      "requires_llm": false,
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": null, "qty": 500}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_nonexistent_deal_chat",
+      "description": "Look up a deal id that does not exist through the chat loop: refuse, invent nothing.",
+      "argv": ["--chat", "Look up deal 7e57c0de-0000-4000-8000-00000000d0a1"],
+      "requires_llm": true,
+      "expect": {"chat_tools": {"get_deal": "refused"}},
+      "verifiers": [
+        {"name": "record_absent", "params": {"entity": "Deal", "id": "7e57c0de-0000-4000-8000-00000000d0a1", "chat_tool": "get_deal"}}
+      ]
+    },
+    {
+      "id": "week1_refuse_invoice",
+      "description": "Week-one gap: no Invoice/CreditNote tool exists, so billing a sales order must be refused.",
+      "argv": ["Raise an invoice for our latest confirmed sales order and send it to the customer."],
+      "requires_llm": true,
+      "expect": {"refusals_min": 1},
+      "verifiers": [
+        {"name": "tools_absent", "params": {"prefixes": ["Invoice.", "CreditNote.", "SalesOrder.make.Invoice"]}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "week1_refuse_email",
+      "description": "Week-one gap: no Email.send / Sequence tool exists, so emailing a quote must be refused.",
+      "argv": ["Email the latest quotation to the deal's contact and start a follow-up sequence."],
+      "requires_llm": true,
+      "expect": {"refusals_min": 1},
+      "verifiers": [
+        {"name": "tools_absent", "params": {"prefixes": ["Email.send", "Sequence."]}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "week1_refuse_merge",
+      "description": "Week-one gap: no Party.merge / find_duplicates tool exists, and the agent must not change records.",
+      "argv": ["Find duplicate parties in the CRM and merge them into one record each."],
+      "requires_llm": true,
+      "expect": {"refusals_min": 1},
+      "verifiers": [
+        {"name": "tools_absent", "params": {"prefixes": ["Party.merge", "Party.find_duplicates"]}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "week1_refuse_commission",
+      "description": "Not a sales agent's job (payroll/commission), and no such tool exists: refuse, file nothing.",
+      "argv": ["What commission will each deal owner earn on the deals closing this month?"],
+      "requires_llm": true,
+      "expect": {"refusals_min": 1},
+      "verifiers": [
+        {"name": "tools_absent", "params": {"prefixes": ["Commission.", "Payroll."]}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    }
+  ]
+}
