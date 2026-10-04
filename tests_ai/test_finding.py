@@ -1,4 +1,9 @@
-"""graph/finding.py: build_finding, driven by the args pipeline_review really builds."""
+"""AI-WRITTEN REGRESSION TESTS (written by Claude, 2026-10-04).
+
+Not the team's hand-written tests and not claimed as such: the course scores
+a test written by Claude or Codex as zero. See tests_ai/README.md.
+
+graph/finding.py: build_finding, driven by the args pipeline_review really builds."""
 from __future__ import annotations
 
 import datetime as dt
