@@ -1,4 +1,9 @@
-"""llm/fence.py, and that chat_loop fences what the model reads and nothing else."""
+"""AI-WRITTEN REGRESSION TESTS (written by Claude, 2026-10-04).
+
+Not the team's hand-written tests and not claimed as such: the course scores
+a test written by Claude or Codex as zero. See tests_ai/README.md.
+
+llm/fence.py, and that chat_loop fences what the model reads and nothing else."""
 from __future__ import annotations
 
 import datetime as dt
