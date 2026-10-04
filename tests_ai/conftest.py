@@ -1,4 +1,9 @@
-"""Shared test doubles. Every test here is offline: nothing reaches the platform."""
+"""AI-WRITTEN REGRESSION TESTS (written by Claude, 2026-10-04).
+
+Not the team's hand-written tests and not claimed as such: the course scores
+a test written by Claude or Codex as zero. See tests_ai/README.md.
+
+Shared test doubles. Every test here is offline: nothing reaches the platform."""
 from __future__ import annotations
 
 import pytest

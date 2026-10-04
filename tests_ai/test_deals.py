@@ -1,4 +1,9 @@
-"""domain/deals.py: the snapshot read and the two filters over it."""
+"""AI-WRITTEN REGRESSION TESTS (written by Claude, 2026-10-04).
+
+Not the team's hand-written tests and not claimed as such: the course scores
+a test written by Claude or Codex as zero. See tests_ai/README.md.
+
+domain/deals.py: the snapshot read and the two filters over it."""
 from __future__ import annotations
 
 import datetime as dt
