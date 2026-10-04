@@ -14,6 +14,7 @@ import time
 
 from llm import tools
 from llm.fence import fence
+from llm.provenance import SeenIds
 from transport.llm_client import call_llm
 from transport.mcp_client import MCPClient
 
@@ -68,6 +69,7 @@ def run(query: str, session_id: str | None, client: MCPClient,
     ]
     collected: dict[str, dict] = {}
     trace: list[dict] = []
+    seen = SeenIds(query)
 
     for _ in range(MAX_TOOL_ITERATIONS):
         resp = call_llm(messages, tools=tools.TOOL_SPECS, tool_choice="auto")
@@ -87,6 +89,8 @@ def run(query: str, session_id: str | None, client: MCPClient,
             t0 = time.time()
             if fn is None:
                 result = {"outcome": "error", "reason": f"unknown tool {name}"}
+            elif unseen := seen.check(name, args):
+                result = unseen  # never sent to AgentSwitch
             else:
                 try:
                     result = fn(args)
@@ -96,6 +100,7 @@ def run(query: str, session_id: str | None, client: MCPClient,
             trace.append({"tool": name, "arguments": args, "outcome": result.get("outcome"),
                           "reason": result.get("reason"), "seconds": round(time.time() - t0, 2),
                           "result": result})
+            seen.add_result(result)
             if name in _SECTION_FOR_TOOL:
                 collected[_SECTION_FOR_TOOL[name]] = result
             # Only what the model reads is fenced; trace and collected keep the raw result.
