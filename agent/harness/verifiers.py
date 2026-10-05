@@ -71,7 +71,8 @@ def _pick(row: dict, keys: tuple[str, ...]) -> dict:
 
 
 DEAL_KEYS = ("id", "title", "stage", "expected_close_date", "value", "currency", "updated_at")
-ITEM_KEYS = ("id", "name", "code", "standard_rate", "default_bom_id", "is_sellable")
+ITEM_KEYS = ("id", "name", "code", "standard_rate", "default_bom_id", "is_sellable",
+             "_redacted_fields")
 ESC_KEYS = ("id", "number", "subject", "status", "session_id", "created_at")
 
 
@@ -412,7 +413,11 @@ def _expected_quote(obs: dict | None, ref: str | None, qty) -> tuple[str, dict |
             return "refused", None, f"Item.list search matches {obs.get('total') or len(rows)} items"
     if item.get("standard_rate"):
         return "quoted", item, f"standard_rate {item['standard_rate']}"
-    return "escalated", item, ("no BOM" if not item.get("default_bom_id") else "BOM but no standard_rate")
+    if not item.get("default_bom_id"):
+        return "escalated", item, "no BOM"
+    if "standard_rate" in (item.get("_redacted_fields") or []):
+        return "escalated", item, "BOM, but standard_rate is redacted for this seat"
+    return "escalated", item, "BOM but no standard_rate"
 
 
 def check_quote(f: RunFiles, p: dict) -> list[Check]:
@@ -436,6 +441,13 @@ def check_quote(f: RunFiles, p: dict) -> list[Check]:
         ok = abs((q.get("total_price") or 0) - expected_total) <= MONEY_TOLERANCE
         out.append(Check(v, "total", "pass" if ok else "fail",
                          f"agent {q.get('total_price')}, platform standard_rate x {qty} = {expected_total}"))
+    if want == "escalated" and got == "escalated" and item and item.get("default_bom_id"):
+        # A hidden price is not a missing one: the escalation must say which.
+        hidden = "standard_rate" in (item.get("_redacted_fields") or [])
+        says_hidden = bool(q.get("bom_price_redacted"))
+        out.append(Check(v, "reason", "pass" if says_hidden == hidden else "fail",
+                         f"platform: BOM price {'hidden from this seat' if hidden else 'not set'}; "
+                         f"agent: {'hidden' if says_hidden else 'not set'} ({q.get('reason')!r:.120})"))
     if got in ("escalated", "refused"):
         invented = [k for k in ("unit_price", "total_price") if q.get(k) is not None]
         out.append(Check(v, "no_price_invented", "fail" if invented else "pass",
