@@ -514,6 +514,84 @@ def check_tools_absent(f: RunFiles, p: dict) -> list[Check]:
     return out
 
 
+# What a refusal sounds like, in the template's words or an LLM's.
+REFUSAL_RE = re.compile(
+    r"\brefus|\bcan(?:no|')t\b|\bcan not\b|\bcould(?:n't| not)\b|\bunable\b|\bnot able\b"
+    r"|\bdo(?:es)?(?:n't| not) (?:exist|have)\b|\bno such\b|\bnot found\b|\bno tool\b"
+    r"|\bnot (?:available|supported|possible|permitted|allowed)\b|\bno item matches\b|\bwhich one\b",
+    re.I)
+ESC_RE = re.compile(r"\bESC-\d{4}-\d+\b")
+_NUM = r"\d[\d,]*(?:\.\d+)?"
+# Money only: a currency marker, digit grouping or two decimals. Plain integers
+# (deal counts, days overdue, the quantity asked for) are not amounts.
+MONEY_RE = re.compile(
+    rf"(?:₹|\bRs\.?|\bINR)\s*({_NUM})|({_NUM})\s*(?:INR|rupees)\b"
+    r"|(?<![\w.,-])(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?)(?![\w,-])"
+    r"|(?<![\w.,-])(\d+\.\d{2})(?![\d%-])", re.I)
+
+
+def _expects_refusal(task: dict) -> bool:
+    e = task.get("expect") or {}
+    return ("refusals_min" in e or "refused" in (e.get("sections") or {}).values()
+            or "refused" in (e.get("chat_tools") or {}).values())
+
+
+def _grounded_numbers(obj, out: set[float]) -> set[float]:
+    """Every number in a recorded structure, including numeric strings."""
+    if isinstance(obj, bool):
+        return out
+    if isinstance(obj, (int, float)):
+        out.add(float(obj))
+    elif isinstance(obj, str):
+        for m in re.findall(_NUM, obj):
+            try:
+                out.add(float(m.replace(",", "")))
+            except ValueError:
+                pass
+    elif isinstance(obj, dict):
+        for x in obj.values():
+            _grounded_numbers(x, out)
+    elif isinstance(obj, list):
+        for x in obj:
+            _grounded_numbers(x, out)
+    return out
+
+
+def check_refusal_answer(f: RunFiles, _p: dict) -> list[Check]:
+    """On a task whose right answer is a refusal, read what the user was told.
+
+    The finding recording a refusal isn't enough: the answer must say so, and
+    must not carry an amount, record id or escalation number that the run never
+    got from the platform (the finding, the chat trace, or the task's own argv).
+    """
+    v = "refusal_answer"
+    if not _expects_refusal(f.task):
+        return [Check(v, "applies", "skip", "task does not expect a refusal")]
+    text = f.taskrun.get("answer") or ""
+    if not text.strip():
+        return [Check(v, "stated", "fail", "no answer text: the refusal was never said")]
+    out = [Check(v, "stated", "pass" if REFUSAL_RE.search(text) else "fail",
+                 "answer says it can't / won't" if REFUSAL_RE.search(text)
+                 else f"no refusal wording in the answer: {text[:160]!r}")]
+
+    sources = [f.finding, f.chat_trace or [], f.task.get("argv") or []]
+    flat = repr(sources).lower()
+    known = _grounded_numbers(sources, set())
+    amounts = []
+    for m in MONEY_RE.finditer(text):
+        try:
+            amounts.append(float(next(g for g in m.groups() if g).replace(",", "")))
+        except ValueError:
+            pass
+    invented = ([f"₹{a:,.2f}" for a in amounts if not any(abs(a - k) <= MONEY_TOLERANCE for k in known)]
+                + [u for u in UUID_RE.findall(text) if u.lower() not in flat]
+                + [e for e in ESC_RE.findall(text) if e.lower() not in flat])
+    out.append(Check(v, "nothing_invented", "fail" if invented else "pass",
+                     f"not in anything the run read: {', '.join(sorted(set(invented)))}" if invented
+                     else "every amount and id in the answer came from the run"))
+    return out
+
+
 # ---------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
@@ -532,9 +610,10 @@ VERIFIERS: dict[str, Verifier] = {
     "escalation_effect": Verifier(lambda p: ["escalations_t6"], check_escalation),
     "record_absent": Verifier(lambda p: [f"record:{p['entity']}:{p['id']}"], check_record_absent),
     "tools_absent": Verifier(lambda p: ["tools_list"], check_tools_absent),
+    "refusal_answer": Verifier(lambda p: [], check_refusal_answer),
 }
 
-UNIVERSAL = ("run_completed", "expectations", "calls_policy", "no_side_effects")
+UNIVERSAL = ("run_completed", "expectations", "calls_policy", "no_side_effects", "refusal_answer")
 
 
 def specs_for(task: dict) -> list[dict]:
