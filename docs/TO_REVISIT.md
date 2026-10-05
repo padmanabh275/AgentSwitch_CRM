@@ -68,6 +68,14 @@ are never used in its place.
 
 **Status:** implemented; waiting on instructor confirmation.
 
+**Update 2026-10-05: the platform has answered part of this.** `standard_rate`
+(and `standard_rate_updated_at`) are now in `Item._redacted_fields` for this seat
+and read as null on every item, so the sales seat is not meant to see BOM costing.
+Every quote now escalates, with the reason saying the price is hidden from this seat
+rather than unset (harness task `composite_bom_hidden`). Still worth asking the
+instructor whether a sales quote "off the real BOM price" is meant to be an
+escalation by design, or whether another route exists.
+
 ---
 
 ## 4. Which item to use for the quote demo?

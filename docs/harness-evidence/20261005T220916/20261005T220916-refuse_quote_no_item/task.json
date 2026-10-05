@@ -1,0 +1,32 @@
+{
+  "id": "refuse_quote_no_item",
+  "description": "A quote with no item named: refuse, never guess one.",
+  "argv": [
+    "--asks",
+    "quote",
+    "--qty",
+    "500"
+  ],
+  "requires_llm": false,
+  "expect": {
+    "sections": {
+      "closing_this_month": "not_requested",
+      "at_risk": "not_requested",
+      "quote": "refused"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "quote_matches_db",
+      "params": {
+        "ref": null,
+        "qty": 500
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

@@ -138,6 +138,13 @@ need one: `standard_rate` is a read-only field on `Item` (in its
 data it is set on 27 items, all of which have a BOM, and never on an item
 without one. So it's manufacturing's BOM costing, readable from an entity this
 seat owns. (Instructor to confirm this is the intended field.)
+
+> **Since 2026-10-05 the platform hides `standard_rate` from this seat.** `Item`'s
+> `_redacted_fields` now lists `standard_rate` and `standard_rate_updated_at` (with
+> `purchase_rate`), and every item reads it as null. So **every quote currently
+> escalates**. The reason says the BOM price is *hidden from this seat*, never that it
+> isn't set (`bom_price_redacted: true` in the quote section). The quoting path below
+> still works if the field becomes visible again.
 - The item is looked up by id, code or name. No match or several matches are
   refused ("which one?"), and so is a quote with no stated quantity.
 - **With a BOM price:** the quote is `standard_rate` × qty, before tax and
@@ -205,11 +212,16 @@ default); tasks needing the LLM are skipped when the gateway is down.
 **Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
 `id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
 outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
-closing this month, at risk, the composite question, all three quote
-outcomes (quoted, escalated with and without a BOM), four refusals
+closing this month, at risk, the composite question (`composite_bom_hidden`:
+the quote escalates because the BOM price is redacted for this seat), the
+escalated quote with and without a BOM, four refusals
 (nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
-where refusal is correct because the platform has no tool for it.
+where refusal is correct because the platform has no tool for it. Every
+refusal task is also checked by `refusal_answer`, which reads the answer the
+user sees: it must say it refuses, and every amount and id in it must come
+from something the run read. Scored batches are in
+[`docs/harness-evidence/`](docs/harness-evidence/).
 
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
