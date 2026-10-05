@@ -24,7 +24,8 @@ def files(task, answer, finding=FINDING, chat_trace=None):
 
 
 def statuses(checks):
-    return {c.name: c.status for c in checks}
+    # no_false_escalation is covered in test_not_permitted.py
+    return {c.name: c.status for c in checks if c.name != "no_false_escalation"}
 
 
 def test_honest_refusal_passes():
