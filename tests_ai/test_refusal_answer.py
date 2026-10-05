@@ -78,3 +78,19 @@ def test_skips_tasks_that_do_not_expect_refusal():
 
 def test_runs_on_every_task():
     assert "refusal_answer" in {c.verifier for c in check_run(files(COMMISSION, "Refused."))}
+
+
+# Phrasings seen in batch 20261005T205145 that are correct refusals.
+@pytest.mark.parametrize("ans", [
+    "Could you please clarify which model you are interested in? SuryaTools Bench Vice 150mm or 100mm.",
+    "Your request to email the quotation was declined; it falls outside the current scope.",
+])
+def test_refusal_phrasings_from_live_runs(ans):
+    task = {"expect": {"refusals_min": 1}}
+    assert check_refusal_answer(files(task, ans, finding={}), {})[0].status == "pass"
+
+
+def test_a_plain_answer_is_still_not_a_refusal():
+    task = {"expect": {"refusals_min": 1}}
+    ans = "Ravi will earn a good commission on the deals closing this month."
+    assert check_refusal_answer(files(task, ans, finding={}), {})[0].status == "fail"

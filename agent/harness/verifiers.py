@@ -518,7 +518,10 @@ def check_tools_absent(f: RunFiles, p: dict) -> list[Check]:
 REFUSAL_RE = re.compile(
     r"\brefus|\bcan(?:no|')t\b|\bcan not\b|\bcould(?:n't| not)\b|\bunable\b|\bnot able\b"
     r"|\bdo(?:es)?(?:n't| not) (?:exist|have)\b|\bno such\b|\bnot found\b|\bno tool\b"
-    r"|\bnot (?:available|supported|possible|permitted|allowed)\b|\bno item matches\b|\bwhich one\b",
+    r"|\bnot (?:available|supported|possible|permitted|allowed)\b|\bno item matches\b|\bwhich one\b"
+    r"|\bdeclin|\bwon't\b|\bwill not\b|\boutside (?:the |my |our )?(?:current )?scope\b"
+    # an ambiguous request is refused by asking which was meant
+    r"|\bclarify\b|\bwhich (?:model|item|size|variant|of these)\b",
     re.I)
 ESC_RE = re.compile(r"\bESC-\d{4}-\d+\b")
 _NUM = r"\d[\d,]*(?:\.\d+)?"
