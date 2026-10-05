@@ -66,7 +66,7 @@ class TaskRun:
     session_id: str | None = None
     steps: list[Step] = field(default_factory=list)
     answer: str | None = None
-    answer_source: str | None = None   # "llm" | "template"
+    answer_source: str | None = None   # "llm" | "llm_rewrite" (chat) | "template"
     finding: dict | None = None
     ended: str = "done"                # running | done | error ("running" left behind = crashed)
     error: str | None = None
