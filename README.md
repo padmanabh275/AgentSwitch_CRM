@@ -243,8 +243,8 @@ fails on any `fail` or `error`, is `drift` if drift is the only problem, and
 otherwise passes.
 
 **Hosted run** ("Our harness" → Submit for a run). `agentswitch-harness.toml`
-tells the platform to `pip install -r requirements.txt` (nothing to fetch:
-stdlib only) and run `python agent/run_hosted.py` from the repo root against
+tells the platform to `pip install -r requirements.txt` (just `certifi`,
+whose CA bundle `transport/tls.py` uses if present; the agent is stdlib only) and run `python agent/run_hosted.py` from the repo root against
 a fresh copy of each listed instance, with `AGENTSWITCH_*` and `OPENAI_*` set
 and no internet. `harness/hosted.py` runs the batch, scores each task as it
 finishes and keeps `results.json` (repo root, gitignored) in the platform's
