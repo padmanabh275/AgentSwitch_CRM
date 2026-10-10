@@ -83,6 +83,74 @@ def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path) -
     return {"exit_code": code, "seconds": round(time.time() - t0, 2)}
 
 
+def select_tasks(data: dict, task_ids: str | None) -> list[dict]:
+    """The tasks to run, in file order. Raises ValueError on an unknown id."""
+    tasks = data["tasks"]
+    if task_ids:
+        wanted = [t.strip() for t in task_ids.split(",") if t.strip()]
+        unknown = sorted(set(wanted) - {t["id"] for t in tasks})
+        if unknown:
+            raise ValueError(f"unknown task ids {unknown}")
+        tasks = [t for t in tasks if t["id"] in wanted]
+    return tasks
+
+
+def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool = False,
+              tasks_file: Path = TASKS_PATH, on_task_done=None) -> Path:
+    """Run `tasks` and record the batch; returns the batch directory.
+
+    on_task_done(entry), if given, is called after each task's manifest entry
+    is saved — the hosted run uses it to rewrite results.json as it goes. A
+    task whose ground-truth read or agent launch raises is recorded as
+    status "error" and the batch carries on.
+    """
+    llm_up = not skip_llm and llm_gateway_up()
+    llm_skip_reason = ("--skip-llm" if skip_llm
+                       else None if llm_up else f"LLM backend unreachable at {backend_url()}")
+
+    batch_id = dt.datetime.now(verifiers.IST).strftime("%Y%m%dT%H%M%S")
+    batch_dir = RUNS_DIR / "batches" / batch_id
+    manifest = {"batch_id": batch_id, "started_at": dt.datetime.now(verifiers.IST).isoformat(),
+                "write": write, "today": data["today"], "llm_gateway_up": llm_up,
+                "tasks_file": str(tasks_file), "runs": []}
+    write_json(batch_dir / "manifest.json", manifest)
+
+    client = client_from_env(load_env())
+    print(f"[batch {batch_id}] {len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
+          f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}", flush=True)
+
+    for task in tasks:
+        run_id = f"{batch_id}-{task['id']}"
+        entry = {"task_id": task["id"], "run_id": run_id}
+        if task.get("requires_llm") and llm_skip_reason:
+            entry.update(status="skipped", reason=llm_skip_reason)
+            print(f"  - {task['id']}: skipped ({llm_skip_reason})", flush=True)
+        else:
+            run_dir = RUNS_DIR / run_id
+            try:
+                write_json(run_dir / "task.json", {**task, "today": data["today"]})
+                keys = verifiers.observations_for(task)
+                write_json(run_dir / "ground_truth_before.json", verifiers.observe_all(client, keys))
+                result = run_agent(task, run_id, data["today"], write, run_dir)
+                write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
+            except Exception as e:  # one broken task must not cost the rest of the batch
+                entry.update(status="error", run_dir=str(run_dir),
+                             reason=f"{type(e).__name__}: {e}"[:500])
+                print(f"  - {task['id']}: error ({entry['reason']})", flush=True)
+            else:
+                entry.update(status="ran", run_dir=str(run_dir), **result)
+                print(f"  - {task['id']}: exit {result['exit_code']} in {result['seconds']}s "
+                      f"-> {run_dir}", flush=True)
+        manifest["runs"].append(entry)
+        write_json(batch_dir / "manifest.json", manifest)
+        if on_task_done:
+            on_task_done(entry)
+
+    manifest["finished_at"] = dt.datetime.now(verifiers.IST).isoformat()
+    write_json(batch_dir / "manifest.json", manifest)
+    return batch_dir
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run the harness task set; scoring is score.py's job.")
     ap.add_argument("--tasks", default=None, help="comma-separated task ids (default: all)")
@@ -93,56 +161,14 @@ def main() -> int:
     args = ap.parse_args()
 
     data = load_tasks(args.tasks_file)
-    tasks = data["tasks"]
-    if args.tasks:
-        wanted = [t.strip() for t in args.tasks.split(",") if t.strip()]
-        unknown = sorted(set(wanted) - {t["id"] for t in tasks})
-        if unknown:
-            ap.error(f"unknown task ids {unknown}")
-        tasks = [t for t in tasks if t["id"] in wanted]
-
-    llm_up = not args.skip_llm and llm_gateway_up()
-    llm_skip_reason = ("--skip-llm" if args.skip_llm
-                       else None if llm_up else f"LLM backend unreachable at {backend_url()}")
-
-    batch_id = dt.datetime.now(verifiers.IST).strftime("%Y%m%dT%H%M%S")
-    batch_dir = RUNS_DIR / "batches" / batch_id
-    manifest = {"batch_id": batch_id, "started_at": dt.datetime.now(verifiers.IST).isoformat(),
-                "write": args.write, "today": data["today"], "llm_gateway_up": llm_up,
-                "tasks_file": str(args.tasks_file), "runs": []}
-    write_json(batch_dir / "manifest.json", manifest)
-
-    client = client_from_env(load_env())
-    print(f"[batch {batch_id}] {len(tasks)} task(s), {'WRITE' if args.write else 'dry run'}, "
-          f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}")
-
-    for task in tasks:
-        run_id = f"{batch_id}-{task['id']}"
-        entry = {"task_id": task["id"], "run_id": run_id}
-        if task.get("requires_llm") and llm_skip_reason:
-            entry.update(status="skipped", reason=llm_skip_reason)
-            manifest["runs"].append(entry)
-            write_json(batch_dir / "manifest.json", manifest)
-            print(f"  - {task['id']}: skipped ({llm_skip_reason})")
-            continue
-
-        run_dir = RUNS_DIR / run_id
-        write_json(run_dir / "task.json", {**task, "today": data["today"]})
-        keys = verifiers.observations_for(task)
-        write_json(run_dir / "ground_truth_before.json", verifiers.observe_all(client, keys))
-        result = run_agent(task, run_id, data["today"], args.write, run_dir)
-        write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
-
-        entry.update(status="ran", run_dir=str(run_dir), **result)
-        manifest["runs"].append(entry)
-        write_json(batch_dir / "manifest.json", manifest)
-        print(f"  - {task['id']}: exit {result['exit_code']} in {result['seconds']}s -> {run_dir}")
-
-    manifest["finished_at"] = dt.datetime.now(verifiers.IST).isoformat()
-    write_json(batch_dir / "manifest.json", manifest)
+    try:
+        tasks = select_tasks(data, args.tasks)
+    except ValueError as e:
+        ap.error(str(e))
+    batch_dir = run_batch(data, tasks, write=args.write, skip_llm=args.skip_llm,
+                          tasks_file=args.tasks_file)
     print(f"\nNothing scored yet. Score with (from agent/):\n  uv run python -m harness.score {batch_dir}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
