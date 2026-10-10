@@ -36,7 +36,8 @@ TOOL_SPECS: list[dict] = [
         "description": (
             "Quote a quantity of an item off its real BOM price (the item's "
             "standard_rate, set by manufacturing's BOM costing). If the item "
-            "has no BOM price, this escalates rather than guessing — it never "
+            "has no BOM price, or this seat can't see it, this escalates rather "
+            "than guessing — it never "
             "invents a number or substitutes a list price."
         ),
         "input_schema": {

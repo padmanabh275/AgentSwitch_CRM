@@ -1,0 +1,92 @@
+{
+  "scorer": "t6-score-v1",
+  "scored_at": "2026-10-05T22:16:16.207928+05:30",
+  "run_id": "20261005T220916-quote_bom_unpriced",
+  "task_id": "quote_bom_unpriced",
+  "dry_run": true,
+  "status": "pass",
+  "counts": {
+    "pass": 12,
+    "skip": 1
+  },
+  "checks": [
+    {
+      "verifier": "run_completed",
+      "name": "ended",
+      "status": "pass",
+      "detail": "run ended done"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:closing_this_month",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:at_risk",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:quote",
+      "status": "pass",
+      "detail": "expected escalated, got escalated"
+    },
+    {
+      "verifier": "calls_policy",
+      "name": "tools",
+      "status": "pass",
+      "detail": "dry run: 2 call(s), writes: none"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "sessions",
+      "status": "pass",
+      "detail": "T6 sessions 0 -> 0 (allowed growth 0)"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "escalations",
+      "status": "pass",
+      "detail": "0 new T6 escalation(s) (allowed 0)"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "applies",
+      "status": "skip",
+      "detail": "task does not expect a refusal"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "outcome",
+      "status": "pass",
+      "detail": "platform says escalated (BOM, but standard_rate is redacted for this seat); agent said escalated"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "item",
+      "status": "pass",
+      "detail": "agent item bb7dd230-3b18-4d25-9593-255ed551c484, platform item bb7dd230-3b18-4d25-9593-255ed551c484"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "reason",
+      "status": "pass",
+      "detail": "platform: BOM price hidden from this seat; agent: hidden (\"item SuryaTools Bench Vice 150mm has a BOM, but its BOM price (Item.standard_rate) is hidden from this seat, so it can')"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "no_price_invented",
+      "status": "pass",
+      "detail": "no price given"
+    },
+    {
+      "verifier": "escalation_effect",
+      "name": "escalation",
+      "status": "pass",
+      "detail": "dry run: would file 'T6-BOM quote for 500x bb7dd230-3b18-4d25-9593-255ed551c484', expected 'T6-BOM quote for 500x bb7dd230-3b18-4d25-9593-255ed551c484'; 0 actually filed"
+    }
+  ]
+}

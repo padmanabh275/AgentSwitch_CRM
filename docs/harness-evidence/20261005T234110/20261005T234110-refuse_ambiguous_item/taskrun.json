@@ -1,0 +1,91 @@
+{
+  "run_id": "20261005T234110-refuse_ambiguous_item",
+  "task_id": "pipeline_review",
+  "prompt": "Quote 500 units of bench vice off the real BOM price?",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "refuse_ambiguous_item",
+  "intent": null,
+  "session_id": null,
+  "steps": [
+    {
+      "target": "resolve_item",
+      "kind": "resolve_item",
+      "status": "refused",
+      "reason": "'bench vice' matches 2 items \u2014 which one? SuryaTools Bench Vice 150mm (ST-VICE-150); SuryaTools Bench Vice 100mm (ST-VICE-100)",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 1.45
+    },
+    {
+      "target": "build_finding",
+      "kind": "build_finding",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "narrate",
+      "kind": "narrate",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 1.43
+    },
+    {
+      "target": "price_lookup",
+      "kind": "price_lookup",
+      "status": "skipped",
+      "reason": "dependency resolve_item was refused: 'bench vice' matches 2 items \u2014 which one? SuryaTools Bench Vice 150mm (ST-VICE-150); SuryaTools Bench Vice 100mm (ST-VICE-100)",
+      "error_code": null,
+      "attempts": 0,
+      "added_by": "plan",
+      "seconds": null
+    }
+  ],
+  "answer": "I am unable to provide a quote for the bench vice because your request is ambiguous. We have two different models available:\n\n*   **SuryaTools Bench Vice 150mm** (Code: ST-VICE-150)\n*   **SuryaTools Bench Vice 100mm** (Code: ST-VICE-100)\n\nPlease specify which model you would like quoted for the 500 units.",
+  "answer_source": "llm",
+  "finding": {
+    "closing_this_month": {
+      "outcome": "not_requested"
+    },
+    "at_risk": {
+      "outcome": "not_requested"
+    },
+    "quote": {
+      "outcome": "refused",
+      "item_id": null,
+      "query": "bench vice",
+      "candidates": [
+        {
+          "id": "bb7dd230-3b18-4d25-9593-255ed551c484",
+          "name": "SuryaTools Bench Vice 150mm",
+          "code": "ST-VICE-150"
+        },
+        {
+          "id": "e7e982cd-dd11-4f31-b912-3f0a9903f6ed",
+          "name": "SuryaTools Bench Vice 100mm",
+          "code": "ST-VICE-100"
+        }
+      ],
+      "reason": "'bench vice' matches 2 items \u2014 which one? SuryaTools Bench Vice 150mm (ST-VICE-150); SuryaTools Bench Vice 100mm (ST-VICE-100)"
+    },
+    "refusals": [],
+    "not_handled": null,
+    "run_id": "20261005T234110-refuse_ambiguous_item",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:44:36.494723+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [],
+  "seconds": 3.77,
+  "started_at": 1791224074.157921
+}

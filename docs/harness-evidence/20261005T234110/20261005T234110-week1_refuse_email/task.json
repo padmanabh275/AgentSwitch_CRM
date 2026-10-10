@@ -1,0 +1,27 @@
+{
+  "id": "week1_refuse_email",
+  "description": "Week-one gap: no Email.send / Sequence tool exists, so emailing a quote must be refused.",
+  "argv": [
+    "Email the latest quotation to the deal's contact and start a follow-up sequence."
+  ],
+  "requires_llm": true,
+  "expect": {
+    "refusals_min": 1
+  },
+  "verifiers": [
+    {
+      "name": "tools_absent",
+      "params": {
+        "prefixes": [
+          "Email.send",
+          "Sequence."
+        ]
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

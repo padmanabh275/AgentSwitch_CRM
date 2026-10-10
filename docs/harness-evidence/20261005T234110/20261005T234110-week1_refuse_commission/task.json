@@ -1,0 +1,27 @@
+{
+  "id": "week1_refuse_commission",
+  "description": "Not a sales agent's job (payroll/commission), and no such tool exists: refuse, file nothing.",
+  "argv": [
+    "What commission will each deal owner earn on the deals closing this month?"
+  ],
+  "requires_llm": true,
+  "expect": {
+    "refusals_min": 1
+  },
+  "verifiers": [
+    {
+      "name": "tools_absent",
+      "params": {
+        "prefixes": [
+          "Commission.",
+          "Payroll."
+        ]
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

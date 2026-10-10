@@ -1,0 +1,25 @@
+{
+  "id": "refuse_nonexistent_deal_chat",
+  "description": "Look up a deal id that does not exist through the chat loop: refuse, invent nothing.",
+  "argv": [
+    "--chat",
+    "Look up deal 7e57c0de-0000-4000-8000-00000000d0a1"
+  ],
+  "requires_llm": true,
+  "expect": {
+    "chat_tools": {
+      "get_deal": "refused"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "record_absent",
+      "params": {
+        "entity": "Deal",
+        "id": "7e57c0de-0000-4000-8000-00000000d0a1",
+        "chat_tool": "get_deal"
+      }
+    }
+  ],
+  "today": "2026-09-28"
+}

@@ -98,10 +98,13 @@ def run_graph(ctx: RunContext, run: TaskRun, plan_args: dict) -> None:
 
 
 def run_chat(ctx: RunContext, run: TaskRun) -> None:
-    answer, collected, trace = chat_loop.run(ctx.query, ctx.session_id, ctx.client,
-                                             dry_run=ctx.dry_run, today=ctx.today)
+    answer, collected, trace, check = chat_loop.run(ctx.query, ctx.session_id, ctx.client,
+                                                    dry_run=ctx.dry_run, today=ctx.today)
     write_json(RUNS_DIR / run.run_id / "chat_trace.json", trace)
-    run.answer, run.answer_source = answer, "llm"
+    run.answer, run.answer_source = answer, check["source"]
+    if check["problems"]:
+        run.warnings.append(f"chat answer {'rewritten' if check['source'] == 'llm_rewrite' else 'replaced by template'}"
+                            f" after failing verify_chat_answer: {check['problems']}")
     run.steps += [Step(target=t["tool"], kind="tool", status=t["outcome"] or "unknown",
                        reason=t["reason"], seconds=t["seconds"]) for t in trace]
     run.finding = {**collected, "run_id": run.run_id, "session_id": run.session_id,

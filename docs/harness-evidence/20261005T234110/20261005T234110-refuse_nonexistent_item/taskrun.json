@@ -1,0 +1,80 @@
+{
+  "run_id": "20261005T234110-refuse_nonexistent_item",
+  "task_id": "pipeline_review",
+  "prompt": "Quote 500 units of 7e57c0de-0000-4000-8000-000000000006 off the real BOM price?",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "refuse_nonexistent_item",
+  "intent": null,
+  "session_id": null,
+  "steps": [
+    {
+      "target": "resolve_item",
+      "kind": "resolve_item",
+      "status": "refused",
+      "reason": "item 7e57c0de-0000-4000-8000-000000000006 does not exist \u2014 nothing to quote",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 1.25
+    },
+    {
+      "target": "build_finding",
+      "kind": "build_finding",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "narrate",
+      "kind": "narrate",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 8.84
+    },
+    {
+      "target": "price_lookup",
+      "kind": "price_lookup",
+      "status": "skipped",
+      "reason": "dependency resolve_item was refused: item 7e57c0de-0000-4000-8000-000000000006 does not exist \u2014 nothing to quote",
+      "error_code": null,
+      "attempts": 0,
+      "added_by": "plan",
+      "seconds": null
+    }
+  ],
+  "answer": "I am unable to provide a quote for the requested item. According to the system records, the item ID **7e57c0de-0000-4000-8000-000000000006** does not exist in our database, and therefore cannot be quoted.",
+  "answer_source": "llm",
+  "finding": {
+    "closing_this_month": {
+      "outcome": "not_requested"
+    },
+    "at_risk": {
+      "outcome": "not_requested"
+    },
+    "quote": {
+      "outcome": "refused",
+      "item_id": "7e57c0de-0000-4000-8000-000000000006",
+      "reason": "item 7e57c0de-0000-4000-8000-000000000006 does not exist \u2014 nothing to quote",
+      "query": "7e57c0de-0000-4000-8000-000000000006",
+      "matched_by": "id"
+    },
+    "refusals": [],
+    "not_handled": null,
+    "run_id": "20261005T234110-refuse_nonexistent_item",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:44:11.261621+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [],
+  "seconds": 11.0,
+  "started_at": 1791224049.1092181
+}
