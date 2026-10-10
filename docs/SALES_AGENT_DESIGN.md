@@ -232,6 +232,10 @@ and S18's harness pattern:
   4. `file_escalation(reason, ...)` — wraps `AgentEscalation.create`
   5. `get_deal(id)` — generic read (flexibility valve)
   6. `get_lead(id)` — generic read (flexibility valve)
+  7. `refuse_request(request, reason)` — added 2026-10-10: records a refusal
+     in the chat finding's `refusals` (the graph's shape); touches nothing.
+     A request routed to chat also carries the classifier's `out_of_scope`
+     refusals into that list.
 - **LLM calls: via `glc_v5`**, the user's own local LLM gateway
   (`/Users/sagarshete/Documents/eagv3/glc_v5`, unrelated repo). Confirmed:
   `POST http://127.0.0.1:8111/v1/chat` takes OpenAI-style `messages` + `tools` +

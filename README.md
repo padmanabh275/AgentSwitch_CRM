@@ -45,13 +45,22 @@ the chat path, `chat_trace.json` (each tool's arguments and full result).
 
 Credentials come from `agent/.env`, then the repo's `.env`: `EMAIL` +
 `SURYODAYA_PW` (password login, renewed on a 401), or a bearer `TOKEN`
-(used as is; `AS` overrides the base URL).
+(used as is; `AS` overrides the base URL). On the hosted harness run,
+`AGENTSWITCH_TOKEN` + `AGENTSWITCH_BASE_URL` take precedence over all of these.
 
 **LLM gateway.** LLM calls go through `glc_v5`, a separate local repo (`GLC_URL`, default `http://127.0.0.1:8111`). It's pinned to the `gemini`
 provider (`GLC_PROVIDER`): unpinned, it picks a local Ollama model that writes
 tool calls out as text instead of making them. If the gateway is down, the
 graph path still answers, using a plain template instead of LLM prose; `--chat`
 can't run without it.
+
+**OpenAI-compatible model.** If `OPENAI_BASE_URL` or `OPENAI_API_KEY` is set,
+LLM calls go to `$OPENAI_BASE_URL/chat/completions` with `OPENAI_MODEL`
+instead of glc_v5 — what the hosted harness run provides. Callers don't
+change: `transport/llm_client.py` translates tools, tool calls and replies.
+Locally any OpenAI-compatible server works, e.g. Ollama with a tool-capable
+model (`OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_API_KEY=ollama
+OPENAI_MODEL=gemma4:e4b`).
 
 ## How it works
 
@@ -205,11 +214,15 @@ default); tasks needing the LLM are skipped when the gateway is down.
 **Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
 `id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
 outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
-closing this month, at risk, the composite question, all three quote
-outcomes (quoted, escalated with and without a BOM), four refusals
+closing this month, at risk, the composite question, the escalated quote
+outcomes (with and without a BOM), four refusals
 (nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
-where refusal is correct because the platform has no tool for it.
+where refusal is correct because the platform has no tool for it. The
+composite task no longer pins its quote to `quoted`: its item's
+`standard_rate` was cleared on the shared instance, so `quote_matches_db`
+decides the right outcome from live data, and no task currently guarantees
+the quoted path.
 
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
@@ -233,18 +246,39 @@ task's premise doesn't hold on live data; it counts as not passing. A task
 fails on any `fail` or `error`, is `drift` if drift is the only problem, and
 otherwise passes.
 
+**Hosted run** ("Our harness" → Submit for a run). `agentswitch-harness.toml`
+tells the platform to `pip install -r requirements.txt` (just `certifi`,
+whose CA bundle `transport/tls.py` uses if present; the agent is stdlib only) and run `python agent/run_hosted.py` from the repo root against
+a fresh copy of each listed instance, with `AGENTSWITCH_*` and `OPENAI_*` set
+and no internet. `harness/hosted.py` runs the batch, scores each task as it
+finishes and keeps `results.json` (repo root, gitignored) in the platform's
+format the whole time, so a crash or timeout still leaves a valid file. A
+task passes only if `score.py` says `pass`; `score` is the fraction of its
+checks that passed. Each agent run is killed after `--task-timeout` (180s)
+and no task starts once `--budget-minutes` (20, under the toml's 25) is
+nearly spent. The run is a dry run; add `--write` to the toml's `run` to test
+writes (the instance copy is thrown away). One run per team every 3 days, so
+rehearse locally with only those variables set:
+
+```bash
+AGENTSWITCH_BASE_URL=... AGENTSWITCH_TOKEN=... AGENTSWITCH_INSTANCE=suryodaya \
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_API_KEY=ollama OPENAI_MODEL=gemma4:e4b \
+python agent/run_hosted.py --tasks at_risk,quote_no_bom
+```
+
 ## Repo layout
 
 ```
 agent/
   run.py            entry point
+  run_hosted.py     hosted harness run launcher (see agentswitch-harness.toml)
   config.py         .env loading, runs/ location
-  transport/        mcp_client (typed errors, re-login), llm_client (glc_v5)
+  transport/        mcp_client (typed errors, re-login), llm_client (glc_v5 or OpenAI-compatible)
   domain/           deals, items, escalation, records: no LLM, pure where possible
   graph/            engine, registry (the allowlist), plans, planner, finding
   llm/              intent (classify), narrate, verify, chat_loop, tools (its curated menu)
   harness/          run_record (TaskRun), persist (platform writes), call_log,
-                    tasks.json, verifiers, runner, score
+                    tasks.json, verifiers, runner, score, hosted (results.json)
 docs/               design notes, brief, recon, bug register
 tests/              hand-written tests go here
 ```

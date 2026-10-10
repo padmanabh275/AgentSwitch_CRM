@@ -2,8 +2,9 @@
 
 Deliberately excludes every write/transition/bypass tool (Deal.mark_lost.*,
 Quotation.convert_to_order.*, etc.) from the LLM's reach by construction: the
-LLM can only ever call the six functions below, and each one is a thin,
-audited wrapper over domain/.
+LLM can only ever call the seven functions below, and each one is a thin,
+audited wrapper over domain/ (refuse_request touches nothing: it only
+records the refusal in the finding).
 """
 from __future__ import annotations
 
@@ -73,6 +74,24 @@ TOOL_SPECS: list[dict] = [
         },
     },
     {
+        "name": "refuse_request",
+        "description": (
+            "Record that you are refusing (part of) the request: it is not "
+            "this agent's job, it needs a capability no tool here has, or "
+            "the id it names doesn't exist. Call it once per refused part, "
+            "then say so in your answer. Files nothing and changes nothing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request": {"type": "string",
+                            "description": "the part of the request being refused, briefly"},
+                "reason": {"type": "string", "description": "why it is refused"},
+            },
+            "required": ["request", "reason"],
+        },
+    },
+    {
         "name": "get_deal",
         "description": (
             "Look up one deal by id. If the id doesn't exist, this reports "
@@ -113,6 +132,13 @@ def build_dispatch(client: MCPClient, session_id: str | None, dry_run: bool = Fa
             client, session_id, reason=args["reason"],
             reason_code=args.get("reason_code", "other"),
             subject=args.get("subject"), party_id=args.get("party_id"), dry_run=dry_run),
+        "refuse_request": lambda args: refusal(args.get("request", ""), args.get("reason", "")),
         "get_deal": lambda args: records.get_deal(client, args["id"]),
         "get_lead": lambda args: records.get_lead(client, args["id"]),
     }
+
+
+def refusal(request: str, reason: str) -> dict:
+    """A refusal in the graph's shape (registry "refuse" node), so the
+    finding's `refusals` list reads the same on either path."""
+    return {"outcome": "refused", "request": str(request).strip(), "reason": str(reason).strip()}
