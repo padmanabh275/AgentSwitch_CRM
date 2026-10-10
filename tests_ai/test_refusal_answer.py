@@ -94,3 +94,4 @@ def test_a_plain_answer_is_still_not_a_refusal():
     task = {"expect": {"refusals_min": 1}}
     ans = "Ravi will earn a good commission on the deals closing this month."
     assert check_refusal_answer(files(task, ans, finding={}), {})[0].status == "fail"
+

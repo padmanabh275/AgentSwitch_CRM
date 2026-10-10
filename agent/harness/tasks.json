@@ -23,11 +23,11 @@
       ]
     },
     {
-      "id": "composite_quoted",
-      "description": "The seat's full question: closing, at risk, and 500 units of an item that has a BOM price.",
+      "id": "composite_bom_hidden",
+      "description": "The seat's full question: closing, at risk, and 500 units of an item whose BOM price is set but, since 2026-10-05, redacted for this seat. Was composite_quoted.",
       "argv": ["--item", "SP2319/3567 #3567", "--qty", "500"],
       "requires_llm": false,
-      "expect": {"sections": {"closing_this_month": "answered", "at_risk": "answered", "quote": "quoted"}},
+      "expect": {"sections": {"closing_this_month": "answered", "at_risk": "answered", "quote": "escalated"}},
       "verifiers": [
         {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
         {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},

@@ -7,7 +7,9 @@ Two kinds of problem, both checked deterministically (no LLM):
   (within ₹1, so "264,000" for 264000.0 is fine but "₹6.8 million" isn't).
 - **missing**: a fact the answer must carry but left out — a section total,
   the count of open deals with no close date, that a quote was escalated
-  (or, in a dry run, that nothing was filed), that a list may be partial.
+  (or, in a dry run, that nothing was filed), that a list may be partial,
+  that each refused request was refused (said as a refusal, not a deflection
+  like "that's handled by finance").
 
 Money detection is deliberately narrow: an amount needs a currency marker
 (₹, Rs, INR) or digit grouping (1,234 / 1,23,456) or two decimals. Plain
@@ -27,6 +29,10 @@ MONEY_RE = re.compile(
     r"|(?<![\w.,-])(\d+\.\d{2})(?![\d%-])",              # 5799.00
     re.I,
 )
+REFUSAL_RE = re.compile(
+    r"\brefus|\bcan(?:no|')t\b|\bcan not\b|\bcould(?:n't| not)\b|\bunable\b|\bnot able\b"
+    r"|\bwon't\b|\bwill not\b|\bdeclin|\bnot (?:available|supported|possible|permitted|allowed)\b",
+    re.I)
 TOLERANCE = 1.0   # ₹1: allows rounding to whole rupees, nothing looser
 
 
@@ -99,6 +105,10 @@ def verify_claims(text: str, finding: dict) -> dict:
             missing.append("the quote was escalated")
     elif quote.get("outcome") == "quoted" and not _mentions_amount(text, quote.get("total_price") or 0):
         missing.append(f"quote total {quote.get('total_price'):,.2f}")
+
+    refusals = [r.get("request") for r in finding.get("refusals") or []]
+    if refusals and not REFUSAL_RE.search(text):
+        missing.append("that you can't do this, in so many words: " + "; ".join(map(str, refusals)))
 
     ok = not (unsupported_ids or unsupported_escalations or unsupported_amounts or missing)
     return {"ok": ok, "unsupported_ids": unsupported_ids,
