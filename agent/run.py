@@ -98,8 +98,12 @@ def run_graph(ctx: RunContext, run: TaskRun, plan_args: dict) -> None:
 
 
 def run_chat(ctx: RunContext, run: TaskRun) -> None:
+    # Routed here with out_of_scope parts (they came with an "other" part):
+    # the classifier's refusals are carried into the chat finding.
+    refused = (run.intent or {}).get("out_of_scope") or []
     answer, collected, trace = chat_loop.run(ctx.query, ctx.session_id, ctx.client,
-                                             dry_run=ctx.dry_run, today=ctx.today)
+                                             dry_run=ctx.dry_run, today=ctx.today,
+                                             refused=refused)
     write_json(RUNS_DIR / run.run_id / "chat_trace.json", trace)
     run.answer, run.answer_source = answer, "llm"
     run.steps += [Step(target=t["tool"], kind="tool", status=t["outcome"] or "unknown",
