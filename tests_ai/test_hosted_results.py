@@ -53,6 +53,12 @@ def test_fail_names_the_failing_check():
     assert "deal_set/ids fail: missing D-1" in r["evidence"]
 
 
+def test_timed_out_agent_says_so_first():
+    r = hosted.task_result(TASKS[0], {"exit_code": "timeout", "seconds": 180.01}, FAIL_SCORE, "s")
+    assert r["passed"] is False
+    assert r["evidence"].startswith("agent killed after the 180.01s timeout; fail: 1/2 checks pass")
+
+
 def test_drift_is_not_a_pass():
     drift = {"status": "drift", "checks": [check("pass"), check("drift")]}
     assert hosted.task_result(TASKS[0], {}, drift, "s")["passed"] is False

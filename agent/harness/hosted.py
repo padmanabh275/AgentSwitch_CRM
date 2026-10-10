@@ -12,14 +12,22 @@ task, so a crash or the platform's timeout still leaves a valid file: tasks
 that never ran are listed as failed with that reason. The full evidence
 (runs/<run_id>/, runs/batches/<batch_id>/) is written as usual.
 
+Time: each agent run is killed after --task-timeout seconds, and the batch
+stops starting tasks when --budget-minutes is nearly used up (the rest are
+failed as "time budget exhausted"). Keep the budget a few minutes under the
+toml's timeout_minutes. SIGTERM is turned into a recorded crash.
+
 Usage (from agent/):
     python -m harness.hosted [--tasks id,id] [--write] [--out PATH]
+                             [--task-timeout S] [--budget-minutes M]
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import os
+import signal
+import time
 import traceback
 from pathlib import Path
 
@@ -29,6 +37,9 @@ from harness.run_record import write_json
 from harness.verifiers import IST
 
 RESULTS_PATH = REPO_DIR / "results.json"
+# A full 13-task batch takes 6-8 min; the slowest task on record took 50s.
+TASK_TIMEOUT_S = 180
+BUDGET_MINUTES = 20
 EVIDENCE_CHARS = 500
 TITLE_CHARS = 200
 NOT_RUN = "not run: the harness stopped before reaching this task (timeout or crash)"
@@ -53,6 +64,8 @@ def evidence_for(entry: dict | None, task_score: dict | None) -> str:
     counted = [c for c in task_score["checks"] if c["status"] != "skip"]
     passed = sum(c["status"] == "pass" for c in counted)
     head = f"{task_score['status']}: {passed}/{len(counted)} checks pass ({entry.get('seconds')}s)"
+    if entry.get("exit_code") == "timeout":
+        head = f"agent killed after the {entry.get('seconds')}s timeout; {head}"
     problems = [f"{c['verifier']}/{c['name']} {c['status']}: {c['detail']}"
                 for c in task_score["checks"] if c["status"] not in ("pass", "skip")]
     return "; ".join([head, *problems])
@@ -89,7 +102,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write", action="store_true",
                     help="let the agent write (the hosted instance is a throwaway copy)")
     ap.add_argument("--out", type=Path, default=RESULTS_PATH, help="results file to write")
+    ap.add_argument("--task-timeout", type=float, default=TASK_TIMEOUT_S,
+                    help=f"seconds before one agent run is killed (default {TASK_TIMEOUT_S})")
+    ap.add_argument("--budget-minutes", type=float, default=BUDGET_MINUTES,
+                    help=f"stop starting tasks once this is nearly used (default {BUDGET_MINUTES})")
     args = ap.parse_args(argv)
+    deadline = time.monotonic() + args.budget_minutes * 60
 
     instance = os.environ.get("AGENTSWITCH_INSTANCE") or "local"
     mode = "write" if args.write else "dry run"
@@ -111,12 +129,18 @@ def main(argv: list[str] | None = None) -> int:
         entries[entry["task_id"]] = entry
         save()
 
-    print(f"[hosted] instance {instance}, {mode}, results -> {args.out}", flush=True)
+    def on_sigterm(signum, frame):
+        raise SystemExit("terminated by SIGTERM (platform timeout?)")
+
+    signal.signal(signal.SIGTERM, on_sigterm)
+    print(f"[hosted] instance {instance}, {mode}, budget {args.budget_minutes:g} min, "
+          f"task timeout {args.task_timeout:g}s, results -> {args.out}", flush=True)
     try:
         data = runner.load_tasks()
         tasks = runner.select_tasks(data, args.tasks)
         save()
-        runner.run_batch(data, tasks, write=args.write, on_task_done=on_task_done)
+        runner.run_batch(data, tasks, write=args.write, on_task_done=on_task_done,
+                         agent_timeout_s=args.task_timeout, deadline=deadline)
     except BaseException as e:  # incl. KeyboardInterrupt/SystemExit: still leave a valid file
         crash = f"{type(e).__name__}: {e} | {traceback.format_exc(limit=3)[-300:]}"
         save(crash)

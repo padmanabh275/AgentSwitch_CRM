@@ -38,6 +38,10 @@ from transport.mcp_client import client_from_env
 TASKS_PATH = AGENT_DIR / "harness" / "tasks.json"
 TASKS_FORMAT = "t6-tasks-v1"
 AGENT_TIMEOUT_S = 900
+# With a deadline: what a task needs besides the agent (the after-read and
+# scoring), and the least agent time worth starting a task with.
+TASK_RESERVE_S = 60
+MIN_AGENT_S = 60
 
 
 def load_tasks(path: Path = TASKS_PATH) -> dict:
@@ -64,7 +68,8 @@ def llm_gateway_up(timeout: float = 3.0) -> bool:
     return True
 
 
-def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path) -> dict:
+def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path,
+              timeout_s: float = AGENT_TIMEOUT_S) -> dict:
     cmd = [sys.executable, str(AGENT_DIR / "run.py"), *task["argv"],
            "--today", today, "--run-id", run_id, "--task-id", task["id"]]
     if not write:
@@ -73,10 +78,10 @@ def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path) -
     t0 = time.time()
     try:
         proc = subprocess.run(cmd, cwd=REPO_DIR, env=env, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=AGENT_TIMEOUT_S)
+                              encoding="utf-8", errors="replace", timeout=timeout_s)
         code, out, err = proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
-        code, out, err = "timeout", e.stdout or "", f"timed out after {AGENT_TIMEOUT_S}s"
+        code, out, err = "timeout", e.stdout or "", f"timed out after {timeout_s:.0f}s"
     (run_dir / "stdout.txt").write_text(
         f"$ {' '.join(cmd[1:])}\n\n{out if isinstance(out, str) else out.decode('utf-8', 'replace')}"
         f"\n--- stderr ---\n{err}", encoding="utf-8")
@@ -96,8 +101,14 @@ def select_tasks(data: dict, task_ids: str | None) -> list[dict]:
 
 
 def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool = False,
-              tasks_file: Path = TASKS_PATH, on_task_done=None) -> Path:
+              tasks_file: Path = TASKS_PATH, on_task_done=None,
+              agent_timeout_s: float = AGENT_TIMEOUT_S, deadline: float | None = None) -> Path:
     """Run `tasks` and record the batch; returns the batch directory.
+
+    Each agent run is killed after agent_timeout_s. With a `deadline` (a
+    time.monotonic() value) the agent also gets no more than the time left
+    minus TASK_RESERVE_S, and once that is under MIN_AGENT_S the remaining
+    tasks are recorded as skipped ("time budget exhausted") instead of run.
 
     on_task_done(entry), if given, is called after each task's manifest entry
     is saved — the hosted run uses it to rewrite results.json as it goes. A
@@ -122,16 +133,23 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
     for task in tasks:
         run_id = f"{batch_id}-{task['id']}"
         entry = {"task_id": task["id"], "run_id": run_id}
+        # Agent time the deadline still allows; skip only when *that* runs short.
+        left_s = (float("inf") if deadline is None
+                  else deadline - time.monotonic() - TASK_RESERVE_S)
+        timeout_s = min(agent_timeout_s, left_s)
         if task.get("requires_llm") and llm_skip_reason:
             entry.update(status="skipped", reason=llm_skip_reason)
             print(f"  - {task['id']}: skipped ({llm_skip_reason})", flush=True)
+        elif left_s < min(MIN_AGENT_S, agent_timeout_s):
+            entry.update(status="skipped", reason="time budget exhausted before this task started")
+            print(f"  - {task['id']}: skipped (time budget exhausted)", flush=True)
         else:
             run_dir = RUNS_DIR / run_id
             try:
                 write_json(run_dir / "task.json", {**task, "today": data["today"]})
                 keys = verifiers.observations_for(task)
                 write_json(run_dir / "ground_truth_before.json", verifiers.observe_all(client, keys))
-                result = run_agent(task, run_id, data["today"], write, run_dir)
+                result = run_agent(task, run_id, data["today"], write, run_dir, timeout_s)
                 write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
             except Exception as e:  # one broken task must not cost the rest of the batch
                 entry.update(status="error", run_dir=str(run_dir),
