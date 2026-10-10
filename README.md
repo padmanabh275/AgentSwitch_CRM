@@ -214,11 +214,15 @@ default); tasks needing the LLM are skipped when the gateway is down.
 **Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
 `id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
 outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
-closing this month, at risk, the composite question, all three quote
-outcomes (quoted, escalated with and without a BOM), four refusals
+closing this month, at risk, the composite question, the escalated quote
+outcomes (with and without a BOM), four refusals
 (nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
-where refusal is correct because the platform has no tool for it.
+where refusal is correct because the platform has no tool for it. The
+composite task no longer pins its quote to `quoted`: its item's
+`standard_rate` was cleared on the shared instance, so `quote_matches_db`
+decides the right outcome from live data, and no task currently guarantees
+the quoted path.
 
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
