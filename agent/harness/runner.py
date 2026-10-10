@@ -32,7 +32,7 @@ from pathlib import Path
 from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
 from harness import verifiers
 from harness.run_record import read_json, write_json
-from transport.llm_client import GLC_URL
+from transport.llm_client import backend_url
 from transport.mcp_client import client_from_env
 
 TASKS_PATH = AGENT_DIR / "harness" / "tasks.json"
@@ -56,7 +56,7 @@ def load_tasks(path: Path = TASKS_PATH) -> dict:
 def llm_gateway_up(timeout: float = 3.0) -> bool:
     """Any HTTP answer counts as up; only a refused/timed-out connection is down."""
     try:
-        urllib.request.urlopen(GLC_URL, timeout=timeout)
+        urllib.request.urlopen(backend_url(), timeout=timeout)
     except urllib.error.HTTPError:
         return True
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
@@ -103,7 +103,7 @@ def main() -> int:
 
     llm_up = not args.skip_llm and llm_gateway_up()
     llm_skip_reason = ("--skip-llm" if args.skip_llm
-                       else None if llm_up else f"LLM gateway unreachable at {GLC_URL}")
+                       else None if llm_up else f"LLM backend unreachable at {backend_url()}")
 
     batch_id = dt.datetime.now(verifiers.IST).strftime("%Y%m%dT%H%M%S")
     batch_dir = RUNS_DIR / "batches" / batch_id

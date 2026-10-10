@@ -45,13 +45,22 @@ the chat path, `chat_trace.json` (each tool's arguments and full result).
 
 Credentials come from `agent/.env`, then the repo's `.env`: `EMAIL` +
 `SURYODAYA_PW` (password login, renewed on a 401), or a bearer `TOKEN`
-(used as is; `AS` overrides the base URL).
+(used as is; `AS` overrides the base URL). On the hosted harness run,
+`AGENTSWITCH_TOKEN` + `AGENTSWITCH_BASE_URL` take precedence over all of these.
 
 **LLM gateway.** LLM calls go through `glc_v5`, a separate local repo (`GLC_URL`, default `http://127.0.0.1:8111`). It's pinned to the `gemini`
 provider (`GLC_PROVIDER`): unpinned, it picks a local Ollama model that writes
 tool calls out as text instead of making them. If the gateway is down, the
 graph path still answers, using a plain template instead of LLM prose; `--chat`
 can't run without it.
+
+**OpenAI-compatible model.** If `OPENAI_BASE_URL` or `OPENAI_API_KEY` is set,
+LLM calls go to `$OPENAI_BASE_URL/chat/completions` with `OPENAI_MODEL`
+instead of glc_v5 — what the hosted harness run provides. Callers don't
+change: `transport/llm_client.py` translates tools, tool calls and replies.
+Locally any OpenAI-compatible server works, e.g. Ollama with a tool-capable
+model (`OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_API_KEY=ollama
+OPENAI_MODEL=gemma4:e4b`).
 
 ## How it works
 
@@ -239,7 +248,7 @@ otherwise passes.
 agent/
   run.py            entry point
   config.py         .env loading, runs/ location
-  transport/        mcp_client (typed errors, re-login), llm_client (glc_v5)
+  transport/        mcp_client (typed errors, re-login), llm_client (glc_v5 or OpenAI-compatible)
   domain/           deals, items, escalation, records: no LLM, pure where possible
   graph/            engine, registry (the allowlist), plans, planner, finding
   llm/              intent (classify), narrate, verify, chat_loop, tools (its curated menu)
