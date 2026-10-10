@@ -1,0 +1,11 @@
+# Hosted harness run ("Our harness" -> Submit for a run).
+# The agent is stdlib-only, so install has nothing to fetch.
+# run needs no shell (no cd) and works from the repo root; it always
+# writes <repo>/results.json.
+# Dry run on purpose: write mode has never been exercised end to end.
+# Keep --budget-minutes a few minutes under timeout_minutes.
+install = "pip install -r requirements.txt"
+run     = "python agent/run_hosted.py --budget-minutes 20 --task-timeout 180"
+results = "results.json"
+instances = ["suryodaya"]
+timeout_minutes = 25

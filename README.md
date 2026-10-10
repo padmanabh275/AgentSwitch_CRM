@@ -242,18 +242,39 @@ task's premise doesn't hold on live data; it counts as not passing. A task
 fails on any `fail` or `error`, is `drift` if drift is the only problem, and
 otherwise passes.
 
+**Hosted run** ("Our harness" → Submit for a run). `agentswitch-harness.toml`
+tells the platform to `pip install -r requirements.txt` (nothing to fetch:
+stdlib only) and run `python agent/run_hosted.py` from the repo root against
+a fresh copy of each listed instance, with `AGENTSWITCH_*` and `OPENAI_*` set
+and no internet. `harness/hosted.py` runs the batch, scores each task as it
+finishes and keeps `results.json` (repo root, gitignored) in the platform's
+format the whole time, so a crash or timeout still leaves a valid file. A
+task passes only if `score.py` says `pass`; `score` is the fraction of its
+checks that passed. Each agent run is killed after `--task-timeout` (180s)
+and no task starts once `--budget-minutes` (20, under the toml's 25) is
+nearly spent. The run is a dry run; add `--write` to the toml's `run` to test
+writes (the instance copy is thrown away). One run per team every 3 days, so
+rehearse locally with only those variables set:
+
+```bash
+AGENTSWITCH_BASE_URL=... AGENTSWITCH_TOKEN=... AGENTSWITCH_INSTANCE=suryodaya \
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_API_KEY=ollama OPENAI_MODEL=gemma4:e4b \
+python agent/run_hosted.py --tasks at_risk,quote_no_bom
+```
+
 ## Repo layout
 
 ```
 agent/
   run.py            entry point
+  run_hosted.py     hosted harness run launcher (see agentswitch-harness.toml)
   config.py         .env loading, runs/ location
   transport/        mcp_client (typed errors, re-login), llm_client (glc_v5 or OpenAI-compatible)
   domain/           deals, items, escalation, records: no LLM, pure where possible
   graph/            engine, registry (the allowlist), plans, planner, finding
   llm/              intent (classify), narrate, verify, chat_loop, tools (its curated menu)
   harness/          run_record (TaskRun), persist (platform writes), call_log,
-                    tasks.json, verifiers, runner, score
+                    tasks.json, verifiers, runner, score, hosted (results.json)
 docs/               design notes, brief, recon, bug register
 tests/              hand-written tests go here
 ```

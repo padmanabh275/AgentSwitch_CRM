@@ -1,0 +1,3 @@
+# The agent and harness use only the Python standard library (>= 3.10).
+# This file exists for the hosted run's install step; dev tools are in
+# pyproject.toml's dev group (uv sync).
