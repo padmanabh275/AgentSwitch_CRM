@@ -13,6 +13,7 @@ import json
 import time
 
 from llm import tools
+from llm.verify import chat_feedback, chat_template, verify_chat_answer
 from transport.llm_client import call_llm
 from transport.mcp_client import MCPClient
 
@@ -42,6 +43,16 @@ don't guess a substitute answer.
 A tool result with outcome "error" means the call failed (see error_code) \
 — say so; don't treat it as "not found".
 
+Your tools can read deals and leads, list closing/at-risk deals, quote and \
+escalate. They cannot change a deal's stage, mark it won or lost, convert a \
+quotation, or write anything else. When asked to do any of that, say first, \
+in so many words, that you can't do it from this seat; then say what you did \
+instead.
+
+If a tool result has dry_run: true, nothing was filed: say an escalation \
+would be filed, never that it was. Name an escalation number or a person only \
+if a tool result contains it.
+
 Be direct and concise. State clearly which parts you answered directly, \
 which you escalated, and which you refused."""
 
@@ -50,8 +61,10 @@ _SECTION_FOR_TOOL = {"list_closing_this_month": "closing_this_month",
 
 
 def run(query: str, session_id: str | None, client: MCPClient,
-        dry_run: bool = False, today: dt.date | None = None) -> tuple[str, dict, list[dict]]:
-    """Returns (answer, collected finding sections, trace of tool calls).
+        dry_run: bool = False, today: dt.date | None = None
+        ) -> tuple[str, dict, list[dict], dict]:
+    """Returns (answer, collected finding sections, trace of tool calls, check).
+    check is {"source": "llm" | "llm_rewrite" | "template", "problems": ...}.
     Raises LLMError if the gateway fails; the caller records it."""
     dispatch = tools.build_dispatch(client, session_id, dry_run=dry_run, today=today)
     messages = [
@@ -68,7 +81,8 @@ def run(query: str, session_id: str | None, client: MCPClient,
             text = resp.get("text", "")
             if resp.get("stop_reason") == "max_tokens":
                 text += "\n\n(answer truncated at the token limit)"
-            return text, collected, trace
+            answer, check = _checked(query, text, messages, trace)
+            return answer, collected, trace, check
 
         messages.append({"role": "assistant", "content": resp.get("text", ""),
                           "tool_calls": tool_calls})
@@ -95,4 +109,19 @@ def run(query: str, session_id: str | None, client: MCPClient,
                 "content": json.dumps(result, default=str),
             })
 
-    return "(stopped after max tool iterations without a final answer)", collected, trace
+    return ("(stopped after max tool iterations without a final answer)", collected, trace,
+            {"source": "none", "problems": None})
+
+
+def _checked(query: str, text: str, messages: list[dict], trace: list[dict]) -> tuple[str, dict]:
+    """The answer only if it matches the trace: else one rewrite, else the template."""
+    first = verify_chat_answer(text, query, trace)
+    if first["ok"]:
+        return text, {"source": "llm", "problems": None}
+    retry = messages + [{"role": "assistant", "content": text},
+                        {"role": "user", "content": chat_feedback(first)}]
+    rewritten = call_llm(retry, tools=None).get("text", "")
+    second = verify_chat_answer(rewritten, query, trace)
+    if second["ok"]:
+        return rewritten, {"source": "llm_rewrite", "problems": first}
+    return chat_template(trace), {"source": "template", "problems": second}
