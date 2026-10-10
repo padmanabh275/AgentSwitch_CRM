@@ -58,7 +58,7 @@ from harness.call_log import LoggedClient
 from harness.run_record import Step, TaskRun, write_json
 from llm import chat_loop
 from llm.intent import IntentError, parse_request
-from transport.mcp_client import client_from_env
+from transport.mcp_client import client_from_env, has_credentials
 
 RUN_ID_RE = re.compile(r"[\w.-]+")
 
@@ -139,9 +139,9 @@ def main() -> int:
     if unknown:   # before login, so a typo never leaves a session behind
         ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
     env = load_env()
-    if not (env.get("SURYODAYA_PW") or env.get("TOKEN")):
-        raise SystemExit("FATAL: no credentials — set EMAIL + SURYODAYA_PW (or TOKEN) "
-                         "in agent/.env or the repo's .env")
+    if not has_credentials(env):
+        raise SystemExit("FATAL: no credentials — set AGENTSWITCH_TOKEN, or EMAIL + "
+                         "SURYODAYA_PW (or TOKEN) in agent/.env or the repo's .env")
 
     run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
                              + "-" + uuid.uuid4().hex[:6])
