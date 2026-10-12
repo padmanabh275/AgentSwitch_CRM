@@ -1,0 +1,5 @@
+# The agent and harness use only the Python standard library (>= 3.10).
+# certifi is optional: if installed, transport/tls.py points urllib at its CA
+# bundle, so HTTPS works even on a Python build without system certificates.
+# Dev tools are in pyproject.toml's dev group (uv sync).
+certifi>=2024.2.2

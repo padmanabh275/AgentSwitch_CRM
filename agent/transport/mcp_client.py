@@ -152,13 +152,22 @@ class MCPClient:
         return d.get("result") or {}
 
 
+def has_credentials(env: dict) -> bool:
+    return bool(env.get("AGENTSWITCH_TOKEN") or env.get("SURYODAYA_PW") or env.get("TOKEN"))
+
+
 def client_from_env(env: dict) -> MCPClient:
-    """Password login (EMAIL + SURYODAYA_PW) if set, else the bearer TOKEN.
-    AS overrides the base URL. Raises RuntimeError if neither is present."""
+    """The hosted harness run's AGENTSWITCH_TOKEN (+ AGENTSWITCH_BASE_URL) wins
+    over everything, so a stray local .env can never redirect it. Otherwise:
+    password login (EMAIL + SURYODAYA_PW) if set, else the bearer TOKEN, with
+    AS overriding the base URL. Raises RuntimeError if none is present."""
+    if env.get("AGENTSWITCH_TOKEN"):
+        return MCPClient("", "", base_url=env.get("AGENTSWITCH_BASE_URL") or SURYODAYA,
+                         token=env["AGENTSWITCH_TOKEN"])
     base = env.get("AS") or SURYODAYA
     if env.get("SURYODAYA_PW"):
         return MCPClient(env.get("EMAIL", ""), env["SURYODAYA_PW"], base_url=base)
     if env.get("TOKEN"):
         return MCPClient(env.get("EMAIL", ""), "", base_url=base, token=env["TOKEN"])
-    raise RuntimeError("no AgentSwitch credentials: set EMAIL + SURYODAYA_PW, or TOKEN, "
-                       "in agent/.env or the repo's .env")
+    raise RuntimeError("no AgentSwitch credentials: set AGENTSWITCH_TOKEN, or EMAIL + "
+                       "SURYODAYA_PW, or TOKEN (in agent/.env or the repo's .env)")

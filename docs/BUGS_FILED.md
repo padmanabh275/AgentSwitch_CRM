@@ -3,8 +3,9 @@
 Seat `team06@theschoolofai.in` · Pipeline/crm · Suryodaya
 `https://agentswitch.theschoolofai.in` · company `5cbe5a55-af74-4363-a436-f5350593114c`
 
-**22 reports on file, all status `new`** (checked live 2026-09-28). 11 filed 2026-09-22 in the
-gap-analysis session. **10 more are drafted and not yet filed**; see *Drafts pending review* below.
+**31 reports on file, all status `new`** (checked live 2026-10-05). 11 filed 2026-09-22 in the
+gap-analysis session; 9 from the 2026-09-28 bug hunt (see *Filed from the 2026-09-28 bug hunt* below).
+`/api/bug-report/mine` and `BugReport.list` return the same 31.
 Live source of truth: `GET /api/bug-report/mine` (saved to `out/suryodaya/bugreport_mine_final.json`).
 Report drafts in `drafts/`. `BugReport` has no `update`, so nothing here can be edited after filing.
 
@@ -196,25 +197,43 @@ transition against a `closed_lost` deal. Each returned `invalid_transition` with
 Either these were fixed after 17 Sep or the original repro differed. **Re-check before citing them
 to the app owner.** Evidence: `out/suryodaya/unhappy/` and `UNHAPPY_PATHS.md`.
 
-## Drafts pending review — live bug hunt, 2026-09-28
+## Filed from the 2026-09-28 bug hunt — 9
 
-Full drafts, evidence and the ruled-out list are in `bug-hunt-2026-09-28.md`. **None are filed.**
-Read each one before `BugReport.create`, since filed reports cannot be edited.
+Full drafts, evidence and the ruled-out list are in `bug-hunt-2026-09-28.md`. Nine of the ten
+drafts are filed; D10 was dropped. Dates are the platform's `created_at` (UTC).
 
-| # | Draft | Severity |
-|---|---|---|
-| D1 | `Deal.create` accepts `stage: "closed_won"`, bypassing every transition guard | high |
-| D2 | `sort_order` on `Item`/`Pipeline`/`AddressBook.list`: every legal value is a 500 | high |
-| D3 | List schemas advertise create-time defaults and placeholders on filters (`Deal.list` goes to 0 of 143) | high |
-| D4 | `AgentSession.update` stores negative tool-call, token and cost counters | medium |
-| D5 | `Deal.create` accepts any currency string (`ZZZ`) | medium |
-| D6 | `AgentProvider.list` `provider` enum allows 1 of the 7 providers that exist | medium |
-| D7 | `ContactGroupMember.list` ignores `search` (same class as `5f44fa94`) | medium |
-| D8 | Guard and validation errors carry no error code, and point to REST paths, not tools | medium |
-| D9 | An escalation created without `channel` is never raised, routed or given an SLA | medium; needs one controlled repro first |
-| D10 | `87d456e5` generalises to five more entities | low; follow-up to `87d456e5` |
+| # | id | Filed | Finding | Severity |
+|---|---|---|---|---|
+| D1 | `d99a804e` | 09-27 | `Deal.create` accepts `stage: "closed_won"`, bypassing every transition guard | high |
+| D2 | `8e3fb3cd` | 09-27 | `sort_order` on `Item`/`Pipeline`/`AddressBook.list`: every legal value is a 500 ⚠️ **see below** | high |
+| D3 | `58ea5034` | 09-27 | List schemas advertise create-time defaults and placeholders on filters (`Deal.list` goes to 0 of 143) | high |
+| D4 | `92f40dae` | 09-27 | `AgentSession.update` stores negative tool-call, token and cost counters | medium |
+| D5 | `8a9b1cc1` | 09-27 | `Deal.create` accepts any currency string (`ZZZ`) | medium |
+| D6 | `01f3201b` | 09-27 | `AgentProvider.list` `provider` enum allows 1 of the 7 providers that exist | medium |
+| D7 | `4a0f2d5d` | 09-27 | `ContactGroupMember.list` ignores `search` (same class as `5f44fa94`) | medium |
+| D8 | `2ad62cbf` | 10-05 | An unknown `sort_by` on `Deal.list` / `Party.list` errors with no `data.code`, unlike every other argument error | medium |
+| D9 | `c68f1d54` | 10-04 | An escalation created without `channel` is never raised, routed or given an SLA | medium |
+| D10 | — | — | *Not filed.* `status` advertised and rejected on five more entities | dropped |
+
+- **D8 was narrowed before filing.** Re-checked 2026-10-05 (reads only): the `sort_by` case still
+  has no code, while bad `probability` returns `invalid_arguments` and a missing id `not_found`.
+  The draft's REST-path claim (guard messages saying "Use POST /api/…/transition") was not
+  re-checked, since triggering it needs a write, and is left out of the report.
+- **D9 was filed with fresh numbers:** 70 escalation rows, 69 with a `channel`, not the draft's 26.
+  An earlier attempt, `10b6134c` (2026-10-04), was filed without `company_id`/`reporter` and is
+  invisible to this seat.
+- **D10 dropped (2026-10-05):** `status` is no longer in the `AgentSession`, `AgentTask`, `Lead`,
+  `Quotation` or `SalesOrder` `.update` schemas. Only `Quotation.create` still offers it
+  (`default: "draft"`), too thin for a report of its own.
 
 ## Claims in our own register that no longer hold
+
+**Re-checked 2026-10-05:**
+
+- **D2 (`8e3fb3cd`) may be fixed.** `Item.list` with `sort_order: "asc"` now returns a coded
+  `invalid_arguments` ("/sort_order must be number") instead of a 500. The schema is still `number`
+  where 46 other lists take `asc`/`desc`, so the inconsistency stands; the 500 does not. Not
+  re-checked on `Pipeline` or `AddressBook`.
 
 **Re-checked 2026-09-28:**
 

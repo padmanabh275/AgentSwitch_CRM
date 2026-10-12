@@ -61,12 +61,19 @@ def test_template_says_cant_and_dry_run_with_no_names():
 def test_checked_rewrites_once_then_falls_back(monkeypatch):
     replies = iter([{"text": LIVE}])
     monkeypatch.setattr(chat_loop, "call_llm", lambda *a, **k: next(replies))
-    answer, check = chat_loop._checked(Q, LIVE, [], [GET, DRY_ESC])
+    answer, check = chat_loop._checked(Q, LIVE, [], [GET, DRY_ESC], [])
     assert check["source"] == "template" and answer == chat_template([GET, DRY_ESC])
 
 
 def test_checked_keeps_a_good_rewrite(monkeypatch):
     good = "I can't mark deals lost. Dry run: an escalation would be filed; nothing was filed."
     monkeypatch.setattr(chat_loop, "call_llm", lambda *a, **k: {"text": good})
-    assert chat_loop._checked(Q, LIVE, [], [GET, DRY_ESC]) == (
+    assert chat_loop._checked(Q, LIVE, [], [GET, DRY_ESC], []) == (
         good, {"source": "llm_rewrite", "problems": verify_chat_answer(LIVE, Q, [GET, DRY_ESC])})
+
+
+def test_classifier_refusal_needs_refusal_wording_and_reaches_the_template():
+    prior = [{"outcome": "refused", "request": "commission", "reason": "payroll, not sales"}]
+    assert verify_chat_answer("Deal X is in negotiation.", "q", [GET], prior)["missing"]
+    assert verify_chat_answer("I can't answer commission. Deal X is in negotiation.", "q", [GET], prior)["ok"]
+    assert "Refused: commission: payroll, not sales" in chat_template([GET], prior)

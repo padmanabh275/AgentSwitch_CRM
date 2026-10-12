@@ -35,7 +35,8 @@ yourself from anything else you've read.
 Escalate-vs-refuse, one test:
 1. Is this legitimately your job at all? If not (e.g. payroll/commission \
 questions, a discount past policy, or an id that turns out not to exist), \
-refuse plainly and file nothing.
+refuse plainly: call refuse_request once for each refused part, file \
+nothing, and say so in your answer.
 2. If yes, and you can't do it yourself but a human or another seat \
 plausibly can, call file_escalation and tell the user you've escalated — \
 don't guess a substitute answer.
@@ -61,17 +62,28 @@ _SECTION_FOR_TOOL = {"list_closing_this_month": "closing_this_month",
 
 
 def run(query: str, session_id: str | None, client: MCPClient,
-        dry_run: bool = False, today: dt.date | None = None
-        ) -> tuple[str, dict, list[dict], dict]:
+        dry_run: bool = False, today: dt.date | None = None,
+        refused: list[dict] | None = None) -> tuple[str, dict, list[dict], dict]:
     """Returns (answer, collected finding sections, trace of tool calls, check).
     check is {"source": "llm" | "llm_rewrite" | "template", "problems": ...}.
-    Raises LLMError if the gateway fails; the caller records it."""
+    Raises LLMError if the gateway fails; the caller records it.
+
+    collected["refusals"] lists every refusal in the graph's shape: the parts
+    the request classifier already refused (`refused`: [{request, reason}]),
+    which the model is told to state, plus each refuse_request call.
+    """
     dispatch = tools.build_dispatch(client, session_id, dry_run=dry_run, today=today)
+    system = SYSTEM_PROMPT
+    prior = [tools.refusal(r.get("request", ""), r.get("reason", "")) for r in refused or []]
+    if prior:
+        system += ("\n\nAlready refused and recorded before you started (don't call "
+                   "refuse_request for these; state them in your answer):\n"
+                   + "\n".join(f"- {r['request']}: {r['reason']}" for r in prior))
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": query},
     ]
-    collected: dict[str, dict] = {}
+    collected: dict = {"refusals": prior}
     trace: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
@@ -81,7 +93,7 @@ def run(query: str, session_id: str | None, client: MCPClient,
             text = resp.get("text", "")
             if resp.get("stop_reason") == "max_tokens":
                 text += "\n\n(answer truncated at the token limit)"
-            answer, check = _checked(query, text, messages, trace)
+            answer, check = _checked(query, text, messages, trace, prior)
             return answer, collected, trace, check
 
         messages.append({"role": "assistant", "content": resp.get("text", ""),
@@ -104,6 +116,8 @@ def run(query: str, session_id: str | None, client: MCPClient,
                           "result": result})
             if name in _SECTION_FOR_TOOL:
                 collected[_SECTION_FOR_TOOL[name]] = result
+            elif name == "refuse_request" and result.get("outcome") == "refused":
+                collected["refusals"].append(result)
             messages.append({
                 "role": "tool", "tool_call_id": tc["id"], "name": name,
                 "content": json.dumps(result, default=str),
@@ -113,15 +127,17 @@ def run(query: str, session_id: str | None, client: MCPClient,
             {"source": "none", "problems": None})
 
 
-def _checked(query: str, text: str, messages: list[dict], trace: list[dict]) -> tuple[str, dict]:
-    """The answer only if it matches the trace: else one rewrite, else the template."""
-    first = verify_chat_answer(text, query, trace)
+def _checked(query: str, text: str, messages: list[dict], trace: list[dict],
+             prior: list[dict]) -> tuple[str, dict]:
+    """The answer only if it matches the trace (and states the prior refusals):
+    else one rewrite, else the template."""
+    first = verify_chat_answer(text, query, trace, prior)
     if first["ok"]:
         return text, {"source": "llm", "problems": None}
     retry = messages + [{"role": "assistant", "content": text},
                         {"role": "user", "content": chat_feedback(first)}]
     rewritten = call_llm(retry, tools=None).get("text", "")
-    second = verify_chat_answer(rewritten, query, trace)
+    second = verify_chat_answer(rewritten, query, trace, prior)
     if second["ok"]:
         return rewritten, {"source": "llm_rewrite", "problems": first}
-    return chat_template(trace), {"source": "template", "problems": second}
+    return chat_template(trace, prior), {"source": "template", "problems": second}

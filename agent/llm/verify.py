@@ -143,15 +143,17 @@ DRY_RUN_RE = re.compile(r"dry[- ]run|would (?:be )?(?:file|escalat|raise)|not (?
                         r"|nothing (?:was )?filed", re.I)
 
 
-def verify_chat_answer(text: str, query: str, trace: list[dict]) -> dict:
+def verify_chat_answer(text: str, query: str, trace: list[dict],
+                       prior: list[dict] = ()) -> dict:
     """The chat loop's answer against its own tool trace, deterministically.
 
     - false_escalation: the answer says something was escalated/filed, but no
       escalation was actually filed (a dry run's would_file, or no call at all).
     - unsupported_ids / unsupported_escalations: a record id or ESC- number in
       neither the question nor any tool result.
-    - missing refusal: a tool came back refused or escalated, but the answer
-      never says it couldn't do something.
+    - missing refusal: a tool came back refused or escalated, or the classifier
+      refused a part before the loop (`prior`), but the answer never says it
+      couldn't do something.
     """
     flat = (query + repr([t.get("arguments") for t in trace])
             + repr([t.get("result") for t in trace])).lower()
@@ -169,7 +171,8 @@ def verify_chat_answer(text: str, query: str, trace: list[dict]) -> dict:
     unsupported_ids = sorted({u for u in UUID_RE.findall(text) if u.lower() not in flat})
     unsupported_escalations = sorted({e for e in ESC_RE.findall(text) if e.lower() not in flat})
     missing = []
-    if any(t.get("outcome") in ("refused", "escalated") for t in trace) and not REFUSAL_RE.search(text):
+    if ((prior or any(t.get("outcome") in ("refused", "escalated") for t in trace))
+            and not REFUSAL_RE.search(text)):
         missing.append("that you can't do what was asked, in so many words (\"I can't ...\")")
 
     ok = not (false_escalation or unsupported_ids or unsupported_escalations or missing)
@@ -192,11 +195,12 @@ def chat_feedback(check: dict) -> str:
     return "\n".join(lines)
 
 
-def chat_template(trace: list[dict]) -> str:
+def chat_template(trace: list[dict], prior: list[dict] = ()) -> str:
     """Fallback: every line straight from a tool result, no names, no prose."""
     out = []
-    if any(t.get("outcome") in ("refused", "escalated") for t in trace):
+    if prior or any(t.get("outcome") in ("refused", "escalated") for t in trace):
         out.append("I can't do what was asked from this seat.")
+    out += [f"Refused: {r.get('request')}: {r.get('reason')}" for r in prior]
     for t in trace:
         r, o = t.get("result") or {}, t.get("outcome")
         if t.get("tool") == "file_escalation" and o == "escalated":
