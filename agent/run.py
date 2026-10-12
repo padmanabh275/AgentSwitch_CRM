@@ -57,7 +57,7 @@ from harness import persist
 from harness.call_log import LoggedClient
 from harness.run_record import Step, TaskRun, write_json
 from llm import chat_loop
-from llm.intent import IntentError, parse_request
+from llm.intent import IntentError, classifier_fallback, parse_request
 from transport.mcp_client import client_from_env, has_credentials
 
 RUN_ID_RE = re.compile(r"[\w.-]+")
@@ -163,21 +163,23 @@ def main() -> int:
 
     plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty}
     if args.question:
-        # Classify before anything is written: a request we can't classify
-        # shouldn't leave a session behind.
+        # Classify before anything is written, so the route is known before a
+        # session is opened.
         try:
             intent = parse_request(args.question)
         except IntentError as e:
-            run.ended, run.error = "error", str(e)
-            run.steps.append(Step(target="parse_request", kind="llm", status="error", reason=str(e)))
-            run.seconds = round(time.time() - t0, 2)
-            path = run.save(run_dir)
-            print(f"FATAL: {e}\nUse flags (--asks/--item/--qty) or --chat instead.\n[run record: {path}]")
-            return 1
+            # Unclassifiable is not unanswerable: the chat loop gets the whole
+            # question with every tool, refuse_request included. The failed
+            # step and a warning keep the classifier failure on the record.
+            intent = classifier_fallback(str(e))
+            run.steps.append(Step(target="parse_request", kind="llm", status="error", reason=str(e),
+                                  seconds=round(time.time() - t0, 2)))
+            run.warnings.append(f"classifier failed, routed to chat: {e}")
+        else:
+            run.steps.append(Step(target="parse_request", kind="llm", status="answered",
+                                  reason=f"route={intent['route']}",
+                                  seconds=round(time.time() - t0, 2)))
         run.intent = intent
-        run.steps.append(Step(target="parse_request", kind="llm", status="answered",
-                              reason=f"route={intent['route']}",
-                              seconds=round(time.time() - t0, 2)))
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")}
 
