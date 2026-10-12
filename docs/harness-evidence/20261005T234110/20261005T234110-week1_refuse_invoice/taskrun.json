@@ -1,0 +1,96 @@
+{
+  "run_id": "20261005T234110-week1_refuse_invoice",
+  "task_id": "pipeline_review",
+  "prompt": "Raise an invoice for our latest confirmed sales order and send it to the customer.",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "week1_refuse_invoice",
+  "intent": {
+    "route": "graph",
+    "asks": [],
+    "item_ref": null,
+    "qty": null,
+    "out_of_scope": [
+      {
+        "request": "Raise an invoice and send it to the customer",
+        "reason": "Invoicing and billing operations are handled by the finance department, not the sales agent."
+      }
+    ],
+    "other": null
+  },
+  "session_id": null,
+  "steps": [
+    {
+      "target": "parse_request",
+      "kind": "llm",
+      "status": "answered",
+      "reason": "route=graph",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": null,
+      "seconds": 4.82
+    },
+    {
+      "target": "refuse_1",
+      "kind": "refuse",
+      "status": "refused",
+      "reason": "Invoicing and billing operations are handled by the finance department, not the sales agent.",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "build_finding",
+      "kind": "build_finding",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "narrate",
+      "kind": "narrate",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 6.3
+    }
+  ],
+  "answer": "Refused: Raise an invoice and send it to the customer \u2014 Invoicing and billing operations are handled by the finance department, not the sales agent.",
+  "answer_source": "template",
+  "finding": {
+    "closing_this_month": {
+      "outcome": "not_requested"
+    },
+    "at_risk": {
+      "outcome": "not_requested"
+    },
+    "quote": {
+      "outcome": "not_requested"
+    },
+    "refusals": [
+      {
+        "outcome": "refused",
+        "request": "Raise an invoice and send it to the customer",
+        "reason": "Invoicing and billing operations are handled by the finance department, not the sales agent."
+      }
+    ],
+    "not_handled": null,
+    "run_id": "20261005T234110-week1_refuse_invoice",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:46:57.267224+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [
+    "narrate fell back to template: glc_v5 HTTP 502: b'{\"detail\":\"gemini_1 failed: gemini HTTP 503: {\\\\n  \\\\\"error\\\\\": {\\\\n    \\\\\"code\\\\\": 503,\\\\n    \\\\\"message\\\\\": \\\\\"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\\\\\",\\\\n    \\\\\"status\\\\\": \\\\\"UNAVAILABLE\\\\\"\\\\n  }\\\\n}\\\\n\"}'"
+  ],
+  "seconds": 12.07,
+  "started_at": 1791224211.505006
+}

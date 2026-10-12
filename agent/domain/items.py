@@ -8,6 +8,11 @@ with a BOM, and never on an item without one. That is manufacturing's BOM
 costing, readable from a Sales-owned entity; which field counts as "the
 BOM price" is still to be confirmed with the instructor.
 
+Since 2026-10-05 the platform hides it from this seat: Item's
+`_redacted_fields` lists standard_rate (and purchase_rate), and every item
+reads standard_rate null. A redacted price is not an unset one, so the
+quote is escalated saying the price is hidden, never that it isn't set.
+
 A quote is standard_rate x qty. When standard_rate is unset (42 of the 69
 items with a BOM, and every item without one), the quote is escalated —
 never filled in from a list price or anything else. It never invents a
@@ -25,7 +30,8 @@ BOM_PRICE_FIELD = "standard_rate"
 # quoted: none of them is the BOM price the request asks for.
 LIST_PRICE_FIELDS = ("default_rate", "selling_price", "mrp")
 ITEM_FIELDS = ("id", "name", "code", "uom", "is_sellable", "is_manufactured",
-               "default_bom_id", BOM_PRICE_FIELD, "standard_rate_updated_at") + LIST_PRICE_FIELDS
+               "default_bom_id", BOM_PRICE_FIELD, "standard_rate_updated_at",
+               "_redacted_fields") + LIST_PRICE_FIELDS
 
 
 def get_item(client: MCPClient, item_id: str) -> dict:
@@ -128,11 +134,20 @@ def price_lookup(item_section: dict, qty: int) -> dict:
                            f"costing{', updated ' + updated if updated else ''}); "
                            "excludes tax and discounts")}
 
-    why = ("has no BOM" if not item.get("default_bom_id")
-           else "has a BOM but no BOM price (standard_rate) set yet")
+    name = item.get("name") or item_id
+    redacted = BOM_PRICE_FIELD in (item.get("_redacted_fields") or [])
+    if not item.get("default_bom_id"):
+        why = f"item {name} has no BOM, so there's no real BOM price to quote from"
+    elif redacted:
+        why = (f"item {name} has a BOM, but its BOM price (Item.{BOM_PRICE_FIELD}) is hidden "
+               "from this seat, so it can't be read here; someone who can see BOM costing "
+               "has to price it")
+    else:
+        why = (f"item {name} has a BOM but no BOM price (Item.{BOM_PRICE_FIELD}) set yet, "
+               "so there's no real BOM price to quote from")
     return {**base, "outcome": "unpriced", "list_prices": list_prices,
-            "reason": (f"item {item.get('name') or item_id} {why}, so there's no real BOM "
-                       "price to quote from; list prices aren't a substitute")}
+            "bom_price_redacted": redacted,
+            "reason": f"{why}; list prices aren't a substitute"}
 
 
 def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
@@ -142,7 +157,8 @@ def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
                           subject=quote_subject(priced["item_id"], priced["requested_qty"]),
                           dry_run=dry_run)
     return {**esc, **{k: priced.get(k) for k in ("requested_qty", "item_id", "item_name",
-                                                 "item_code", "list_prices", "reason")}}
+                                                 "item_code", "list_prices", "bom_price_redacted",
+                                                 "reason")}}
 
 
 def attempt_quote(client: MCPClient, session_id: str | None, item_ref: str, qty: int,

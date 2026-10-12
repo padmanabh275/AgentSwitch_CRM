@@ -1,0 +1,70 @@
+{
+  "run_id": "20261005T234110-refuse_quote_no_item",
+  "task_id": "pipeline_review",
+  "prompt": "Quote 500 units of (unspecified item) off the real BOM price?",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "refuse_quote_no_item",
+  "intent": null,
+  "session_id": null,
+  "steps": [
+    {
+      "target": "quote_refused",
+      "kind": "refuse",
+      "status": "refused",
+      "reason": "can't quote without knowing which item",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "build_finding",
+      "kind": "build_finding",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "narrate",
+      "kind": "narrate",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 5.69
+    }
+  ],
+  "answer": "It appears you have provided a structured JSON output representing a system's response to a request.\n\n**Summary of the Finding:**\n*   **Status:** The request to quote 500 units was **refused**.\n*   **Reason:** The system could not process the request because the **item ID** was not specified in your query.\n*   **Action Required:** To receive a quote, you must provide the specific part number or item identifier you are inquiring about.\n\n**How to proceed:**\nPlease resubmit your request including the specific item name or part number (e.g., \"Quote 500 units of [Part Number] off the real BOM price\").",
+  "answer_source": "llm",
+  "finding": {
+    "closing_this_month": {
+      "outcome": "not_requested"
+    },
+    "at_risk": {
+      "outcome": "not_requested"
+    },
+    "quote": {
+      "outcome": "refused",
+      "requested_qty": 500,
+      "item_id": null,
+      "query": null,
+      "reason": "can't quote without knowing which item"
+    },
+    "refusals": [],
+    "not_handled": null,
+    "run_id": "20261005T234110-refuse_quote_no_item",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:44:51.752314+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [],
+  "seconds": 6.57,
+  "started_at": 1791224090.878048
+}

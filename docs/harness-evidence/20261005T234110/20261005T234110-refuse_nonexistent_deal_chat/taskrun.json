@@ -1,0 +1,35 @@
+{
+  "run_id": "20261005T234110-refuse_nonexistent_deal_chat",
+  "task_id": "chat",
+  "prompt": "Look up deal 7e57c0de-0000-4000-8000-00000000d0a1",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "refuse_nonexistent_deal_chat",
+  "intent": null,
+  "session_id": null,
+  "steps": [
+    {
+      "target": "get_deal",
+      "kind": "tool",
+      "status": "refused",
+      "reason": "deal 7e57c0de-0000-4000-8000-00000000d0a1 does not exist",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": null,
+      "seconds": 1.3
+    }
+  ],
+  "answer": "The deal with ID 7e57c0de-0000-4000-8000-00000000d0a1 does not exist.",
+  "answer_source": "llm",
+  "finding": {
+    "run_id": "20261005T234110-refuse_nonexistent_deal_chat",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:45:27.418470+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [],
+  "seconds": 17.29,
+  "started_at": 1791224110.12723
+}

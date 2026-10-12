@@ -1,0 +1,25 @@
+{
+  "id": "at_risk",
+  "description": "Open deals whose expected close date has passed, each with a reason.",
+  "argv": [
+    "--asks",
+    "at_risk"
+  ],
+  "requires_llm": false,
+  "expect": {
+    "sections": {
+      "closing_this_month": "not_requested",
+      "at_risk": "answered",
+      "quote": "not_requested"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "deal_set_matches_db",
+      "params": {
+        "section": "at_risk"
+      }
+    }
+  ],
+  "today": "2026-09-28"
+}

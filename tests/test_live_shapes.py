@@ -125,7 +125,7 @@ def test_exact_code_or_name_resolves(platform, ref, item):
 def test_resolved_item_drops_platform_noise(platform):
     out = items.resolve_item(platform, "ST-VICE-150")
     assert set(out["item"]) == set(items.ITEM_FIELDS)
-    assert "_redacted_fields" not in out["item"] and "suppliers" not in out["item"]
+    assert "suppliers" not in out["item"]
 
 
 def test_item_id_goes_to_get(platform):
@@ -150,7 +150,8 @@ def priced(platform, ref, qty=500):
 def test_redacted_rate_with_bom_is_unpriced(platform):
     out = priced(platform, "ST-VICE-150")
     assert out["outcome"] == "unpriced"
-    assert "has a BOM but no BOM price" in out["reason"]
+    assert out["bom_price_redacted"] is True
+    assert "hidden from this seat" in out["reason"] and "set yet" not in out["reason"]
     assert "total_price" not in out and "unit_price" not in out
 
 
@@ -199,7 +200,7 @@ def test_verifier_and_domain_agree_on_the_outcome(platform, ref):
 def test_verifier_explains_bom_without_rate(platform):
     _, item, why = _expected_quote(_obs_item_ref(platform, "ST-VICE-150"), "ST-VICE-150", 500)
     assert item["id"] == BENCH_VICE_150["id"]
-    assert why == "BOM but no standard_rate"
+    assert why == "BOM, but standard_rate is redacted for this seat"
 
 
 # --- deals: rows as Deal.list returns them ------------------------------------

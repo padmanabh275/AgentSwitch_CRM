@@ -1,0 +1,115 @@
+{
+  "batch_id": "20261005T220916",
+  "started_at": "2026-10-05T22:09:16.643035+05:30",
+  "write": false,
+  "today": "2026-09-28",
+  "llm_gateway_up": true,
+  "tasks_file": "agent/harness/tasks.json",
+  "runs": [
+    {
+      "task_id": "closing_this_month",
+      "run_id": "20261005T220916-closing_this_month",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-closing_this_month",
+      "exit_code": 0,
+      "seconds": 8.9
+    },
+    {
+      "task_id": "at_risk",
+      "run_id": "20261005T220916-at_risk",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-at_risk",
+      "exit_code": 0,
+      "seconds": 9.48
+    },
+    {
+      "task_id": "composite_bom_hidden",
+      "run_id": "20261005T220916-composite_bom_hidden",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-composite_bom_hidden",
+      "exit_code": 0,
+      "seconds": 17.97
+    },
+    {
+      "task_id": "quote_bom_unpriced",
+      "run_id": "20261005T220916-quote_bom_unpriced",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-quote_bom_unpriced",
+      "exit_code": 0,
+      "seconds": 13.56
+    },
+    {
+      "task_id": "quote_no_bom",
+      "run_id": "20261005T220916-quote_no_bom",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-quote_no_bom",
+      "exit_code": 0,
+      "seconds": 11.15
+    },
+    {
+      "task_id": "refuse_nonexistent_item",
+      "run_id": "20261005T220916-refuse_nonexistent_item",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-refuse_nonexistent_item",
+      "exit_code": 0,
+      "seconds": 15.71
+    },
+    {
+      "task_id": "refuse_ambiguous_item",
+      "run_id": "20261005T220916-refuse_ambiguous_item",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-refuse_ambiguous_item",
+      "exit_code": 0,
+      "seconds": 24.28
+    },
+    {
+      "task_id": "refuse_quote_no_item",
+      "run_id": "20261005T220916-refuse_quote_no_item",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-refuse_quote_no_item",
+      "exit_code": 0,
+      "seconds": 8.42
+    },
+    {
+      "task_id": "refuse_nonexistent_deal_chat",
+      "run_id": "20261005T220916-refuse_nonexistent_deal_chat",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-refuse_nonexistent_deal_chat",
+      "exit_code": 0,
+      "seconds": 26.4
+    },
+    {
+      "task_id": "week1_refuse_invoice",
+      "run_id": "20261005T220916-week1_refuse_invoice",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-week1_refuse_invoice",
+      "exit_code": 0,
+      "seconds": 29.52
+    },
+    {
+      "task_id": "week1_refuse_email",
+      "run_id": "20261005T220916-week1_refuse_email",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-week1_refuse_email",
+      "exit_code": 0,
+      "seconds": 18.59
+    },
+    {
+      "task_id": "week1_refuse_merge",
+      "run_id": "20261005T220916-week1_refuse_merge",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-week1_refuse_merge",
+      "exit_code": 1,
+      "seconds": 4.49
+    },
+    {
+      "task_id": "week1_refuse_commission",
+      "run_id": "20261005T220916-week1_refuse_commission",
+      "status": "ran",
+      "run_dir": "runs/20261005T220916-week1_refuse_commission",
+      "exit_code": 0,
+      "seconds": 15.22
+    }
+  ],
+  "finished_at": "2026-10-05T22:16:16.057541+05:30"
+}
