@@ -31,6 +31,7 @@ grading.
 |---|---|
 | `"question"` | Free-text question, classified and routed as above. |
 | `--item ITEM`, `--qty N` | Flags path: the item to quote (id, code or name; `--item-id` is an alias) and quantity (default 500). Without `--item` the quote is refused ("which item?"). |
+| `--deal DEAL_ID` | Make the quote a Quotation on that deal: drafted at the BOM price, read back, then sent (`domain/quotations.py`). The deal is re-read just before the write; if it closed meanwhile, nothing is written and the quotation is refused. |
 | `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three). |
 | `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
@@ -218,11 +219,34 @@ closing this month, at risk, the composite question, the escalated quote
 outcomes (with and without a BOM), four refusals
 (nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
-where refusal is correct because the platform has no tool for it. The
+where refusal is correct because the platform has no tool for it, and two
+**write tasks** (below). The
 composite task no longer pins its quote to `quoted`: its item's
 `standard_rate` was cleared on the shared instance, so `quote_matches_db`
 decides the right outcome from live data, and no task currently guarantees
 the quoted path.
+
+**Write tasks** (`"requires_write": true`; skipped in a dry batch, and left
+out of a dry hosted run). Each builds its own fixture first
+(`harness/fixtures.py`): a `T6-harness-<run_id>` deal walked to
+`negotiation`, plus a sellable item whose `standard_rate` is set, picked at
+run time. Afterwards a still-open fixture deal is marked lost; nothing is
+deleted.
+
+- `write_quote_on_deal`: the request's state change. The agent drafts one
+  Quotation on the deal at `standard_rate` × 500, reads it back and sends
+  it (draft → sent). `quotation_written` checks, over the harness's own
+  reads, exactly one quotation on the deal, the line and totals against
+  `Item.standard_rate`, status `sent`, created by this seat with a `T6-`
+  note, one create and one send in `calls.jsonl`, a deal re-read before the
+  create, no status update or bypass transition, and the deal's stage
+  unchanged.
+- `write_quote_stale_deal`: concurrency. The runner holds the agent at a
+  gate (`harness/gate.py`, armed only by `T6_HARNESS_GATE_DIR`) after its
+  first deal read, marks the deal `closed_lost` itself, records that in
+  `interference.json`, then releases it. `stale_deal_guard` checks a deal
+  read after the change, no quotation write attempted or present, the
+  other writer's `closed_lost` left standing, and a refusal that names it.
 
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
@@ -235,7 +259,9 @@ ground truth, so a bug in the agent can't pass its own check.
 | `escalation_effect` | a claimed escalation exists (or was reused, or in a dry run only `would_file`s) with the `T6-BOM quote for …` subject; nothing filed otherwise |
 | `record_absent` | the id really is `not_found`, and the chat trace refused it |
 | `tools_absent` | `tools/list` has no tool for the request, and none was called |
-| every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode); T6 session and escalation counts didn't grow in a dry run |
+| `quotation_written` | the fixture deal has exactly one correct, sent quotation from this seat; the deal is untouched |
+| `stale_deal_guard` | after the harness closed the deal: re-read, no quotation written, the change kept, refusal names it |
+| every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode, and a write task's own `extra_writes`); T6 session and escalation counts didn't grow in a dry run |
 
 Check statuses are `pass`, `fail`, `drift`, `skip` or `error`. **Drift:** the
 book is shared with Team 07, so an id in only one of the two sets is `drift`,

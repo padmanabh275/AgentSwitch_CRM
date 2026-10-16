@@ -4,7 +4,11 @@ A TaskSpec names one of these entries, never a raw MCP tool, and
 GraphStore.apply rejects anything else — so neither the fixed plan nor a
 planner can reach Deal.mark_lost.*, Quotation.convert_to_order.* or any
 other write this registry doesn't expose. The one write here,
-escalate_quote, is dry-run aware and never retried.
+escalate_quote, is dry-run aware and never retried. So are the two
+quotation writes, create_quotation and send_quotation: they run only when
+the request names a deal (run.py --deal) and the item has a BOM price.
+For an unpriced item on a named deal, draft_for_approval and
+submit_for_approval take the margin-approval route instead (no rate sent).
 
 Node functions take (ctx, args, outcomes) where `outcomes` maps node id ->
 NodeOutcome for everything finished so far. Which upstream node a function
@@ -17,9 +21,10 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from domain import deals, items
+from domain import deals, items, quotations
 from graph.finding import build_finding
 from graph.outcome import ANSWERED, NodeOutcome
+from harness import gate
 from llm import narrate
 from transport.mcp_client import MCPClient, MCPToolError
 
@@ -54,6 +59,23 @@ def _first_answered(outcomes: dict[str, NodeOutcome], node_ids: str | list[str])
         if out is not None and out.status == ANSWERED:
             return out.data
     raise ValueError(f"none of {node_ids} answered")
+
+
+def _create_quotation(ctx: RunContext, a: dict, o: dict[str, NodeOutcome]) -> dict:
+    """The harness may hold the run here (harness/gate.py), between the
+    first deal read and the pre-write re-read, to change the deal."""
+    held = gate.wait_at("before_quotation_write")
+    out = quotations.create_quotation(ctx.client, _data(o, a["deal"]), _data(o, a["priced"]),
+                                      ctx.run_id, dry_run=ctx.dry_run)
+    return {**out, "harness_gate": held} if held else out
+
+
+def _draft_for_approval(ctx: RunContext, a: dict, o: dict[str, NodeOutcome]) -> dict:
+    """The same harness gate as _create_quotation: the unpriced route's write."""
+    held = gate.wait_at("before_quotation_write")
+    out = quotations.draft_for_approval(ctx.client, _data(o, a["deal"]), _data(o, a["priced"]),
+                                        ctx.run_id, dry_run=ctx.dry_run)
+    return {**out, "harness_gate": held} if held else out
 
 
 def _reread_deals(ctx: RunContext, previous: dict) -> dict:
@@ -95,6 +117,28 @@ REGISTRY: dict[str, NodeDef] = {
         fn=lambda ctx, a, o: items.escalate_quote(ctx.client, ctx.session_id,
                                                   _data(o, a["priced"]), dry_run=ctx.dry_run),
         description="File (or reuse) an escalation for an unpriced quote.",
+        writes=True),
+    "get_deal": NodeDef(
+        fn=lambda ctx, a, o: quotations.read_open_deal(ctx.client, a["deal_id"]),
+        description="Deal.get; refuses if it doesn't exist or isn't open.",
+        retries=2),
+    "create_quotation": NodeDef(
+        fn=_create_quotation,
+        description="Re-read the deal, then Quotation.create at the BOM price and read it back.",
+        writes=True),
+    "send_quotation": NodeDef(
+        fn=lambda ctx, a, o: quotations.send_quotation(ctx.client, _data(o, a["drafted"]),
+                                                       dry_run=ctx.dry_run),
+        description="Quotation draft -> sent, only if still a draft and the read-back matched.",
+        writes=True),
+    "draft_for_approval": NodeDef(
+        fn=_draft_for_approval,
+        description="Re-read the deal, then Quotation.create with no rate (item unpriced) and read it back.",
+        writes=True),
+    "submit_for_approval": NodeDef(
+        fn=lambda ctx, a, o: quotations.submit_for_approval(ctx.client, _data(o, a["drafted"]),
+                                                            dry_run=ctx.dry_run),
+        description="Quotation draft -> pending_approval (margin approval prices it).",
         writes=True),
     "refuse": NodeDef(
         fn=lambda ctx, a, o: {"outcome": "refused", **a},

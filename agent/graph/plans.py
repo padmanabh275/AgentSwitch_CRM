@@ -7,6 +7,8 @@ built; the planner (graph/planner.py) extends the graph from there.
     snapshot_deals (+ reread_deals) ─┬─ closing_this_month ─┐
                                      └─ at_risk ────────────┤
     resolve_item ── price_lookup ──(+ escalate_quote)───────┤
+    get_deal ──────────────(+ create_quotation ── send_quotation)┤  (with a deal, priced)
+             └─────────(+ draft_for_approval ── submit_for_approval)┤  (with a deal, unpriced)
     refuse_1..n (out-of-scope parts) ───────────────────────┤
                                             build_finding (needs=done) ── narrate
 """
@@ -27,6 +29,10 @@ SECTION_SOURCES = {
     "closing_this_month": ["closing_this_month", "snapshot_deals"],
     "at_risk": ["at_risk", "snapshot_deals"],
     "quote": ["escalate_quote", "price_lookup", "resolve_item", "quote_refused"],
+    # get_deal last: it only answers this section when it refused (no such
+    # deal, or a closed one); otherwise the write nodes do.
+    "quotation": ["submit_for_approval", "draft_for_approval",
+                  "send_quotation", "create_quotation", "get_deal"],
 }
 
 NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own "
@@ -35,9 +41,11 @@ NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own
 
 def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | None = None,
                     out_of_scope: list[dict] | None = None,
-                    other: str | None = None) -> list[TaskSpec]:
+                    other: str | None = None, deal_id: str | None = None) -> list[TaskSpec]:
     """item_ref may be an id, code or name. qty None means "not stated":
-    the quote is refused rather than assuming a quantity."""
+    the quote is refused rather than assuming a quantity. deal_id makes the
+    quote a Quotation on that deal (the planner adds the writes once the
+    price is known); without it the quote is only a number in the finding."""
     unknown = set(asks) - set(ASKS)
     if unknown:
         raise ValueError(f"unknown asks {sorted(unknown)}; expected a subset of {ASKS}")
@@ -66,6 +74,9 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
             tasks.append(TaskSpec("price_lookup", "price_lookup",
                                   args={"item": "resolve_item", "qty": qty}, deps=["resolve_item"]))
             leaves += ["resolve_item", "price_lookup"]
+            if deal_id:
+                tasks.append(TaskSpec("get_deal", "get_deal", args={"deal_id": deal_id}))
+                leaves.append("get_deal")
 
     refusals = []
     for i, part in enumerate(out_of_scope or [], start=1):
@@ -78,7 +89,8 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
     not_handled = {"request": other, "reason": NOT_HANDLED_REASON} if other else None
     tasks.append(TaskSpec("build_finding", "build_finding", needs="done", deps=leaves,
                           args={"asks": list(asks), "sections": SECTION_SOURCES,
-                                "refusals": refusals, "not_handled": not_handled}))
+                                "refusals": refusals, "not_handled": not_handled,
+                                "quotation_requested": bool(deal_id and "quote" in asks)}))
     tasks.append(TaskSpec("narrate", "narrate", args={"finding": "build_finding"},
                           deps=["build_finding"]))
     return tasks

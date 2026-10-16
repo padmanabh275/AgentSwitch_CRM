@@ -2,13 +2,20 @@
 """The harness loop: run every task, write everything to disk, score nothing.
 
 For each task in harness/tasks.json:
+  0. a write task with a "fixture" gets its own fixture rows first
+     (harness/fixtures.py) -> runs/<run_id>/fixture.json; `{deal_id}`-style
+     placeholders in its argv and observation keys are filled from it
   1. read the platform state the task's verifiers need (own login)
      -> runs/<run_id>/ground_truth_before.json
   2. run the agent exactly as a person would: `run.py <argv> --run-id ...`
      in a subprocess (dry run unless --write)
      -> taskrun.json, calls.jsonl, graph.json | chat_trace.json, stdout.txt
+     With "interference", the agent is held at harness/gate.py's gate
+     while the runner makes another writer's change
+     -> interference.json, on disk before the agent is released
   3. read the platform state again
      -> ground_truth_after.json
+  4. retire the fixture (a still-open fixture deal is marked lost)
 and record the batch in runs/batches/<batch_id>/manifest.json.
 
 Scoring is a separate step over those files (harness/score.py), so a
@@ -30,7 +37,7 @@ import urllib.request
 from pathlib import Path
 
 from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
-from harness import verifiers
+from harness import fixtures, gate, verifiers
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
 from transport.mcp_client import client_from_env
@@ -68,24 +75,92 @@ def llm_gateway_up(timeout: float = 3.0) -> bool:
     return True
 
 
+GATE_NAME = "before_quotation_write"
+POLL_S = 0.2
+
+
 def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path,
-              timeout_s: float = AGENT_TIMEOUT_S) -> dict:
-    cmd = [sys.executable, str(AGENT_DIR / "run.py"), *task["argv"],
+              timeout_s: float = AGENT_TIMEOUT_S, argv: list[str] | None = None,
+              on_gate=None) -> dict:
+    """Run the agent in a subprocess. With on_gate, the agent is told to
+    stop at GATE_NAME (harness/gate.py); on_gate() runs while it waits,
+    and the agent is released only after it returns."""
+    cmd = [sys.executable, str(AGENT_DIR / "run.py"), *(argv or task["argv"]),
            "--today", today, "--run-id", run_id, "--task-id", task["id"]]
     if not write:
         cmd.append("--dry-run")
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    env.pop(gate.ENV, None)
+    gate_dir = run_dir / "gate"
+    if on_gate:
+        env[gate.ENV] = str(gate_dir)
+    out_path, err_path = run_dir / "stdout.raw", run_dir / "stderr.raw"
     t0 = time.time()
-    try:
-        proc = subprocess.run(cmd, cwd=REPO_DIR, env=env, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout_s)
-        code, out, err = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        code, out, err = "timeout", e.stdout or "", f"timed out after {timeout_s:.0f}s"
+    gated = False
+    with out_path.open("w", encoding="utf-8") as out_f, err_path.open("w", encoding="utf-8") as err_f:
+        proc = subprocess.Popen(cmd, cwd=REPO_DIR, env=env, stdout=out_f, stderr=err_f,
+                                text=True, encoding="utf-8", errors="replace")
+        code: int | str | None = None
+        while code is None:
+            code = proc.poll()
+            if code is not None:
+                break
+            if time.time() - t0 > timeout_s:
+                proc.kill()
+                proc.wait()
+                code = "timeout"
+                break
+            if on_gate and not gated and (gate_dir / f"{GATE_NAME}.ready").exists():
+                gated = True
+                try:
+                    on_gate()
+                finally:  # never leave the agent hanging on a failed interference
+                    (gate_dir / f"{GATE_NAME}.go").write_text("go", encoding="utf-8")
+            time.sleep(POLL_S)
+    out = out_path.read_text(encoding="utf-8", errors="replace")
+    err = err_path.read_text(encoding="utf-8", errors="replace")
+    if code == "timeout":
+        err += f"\ntimed out after {timeout_s:.0f}s"
+    out_path.unlink(missing_ok=True)
+    err_path.unlink(missing_ok=True)
     (run_dir / "stdout.txt").write_text(
-        f"$ {' '.join(cmd[1:])}\n\n{out if isinstance(out, str) else out.decode('utf-8', 'replace')}"
-        f"\n--- stderr ---\n{err}", encoding="utf-8")
-    return {"exit_code": code, "seconds": round(time.time() - t0, 2)}
+        f"$ {' '.join(cmd[1:])}\n\n{out}\n--- stderr ---\n{err}", encoding="utf-8")
+    result = {"exit_code": code, "seconds": round(time.time() - t0, 2)}
+    if on_gate:
+        result["gate_reached"] = gated
+    return result
+
+
+def run_task(client, task: dict, run_id: str, today: str, write: bool, run_dir: Path,
+             timeout_s: float) -> dict:
+    """Fixture, ground truth before, the agent (with any interference),
+    ground truth after, fixture retired. Every step is on disk as it happens."""
+    write_json(run_dir / "task.json", {**task, "today": today})
+    fixture = None
+    if task.get("fixture"):
+        fixture = fixtures.create(client, task["fixture"], run_id)
+        write_json(run_dir / "fixture.json", fixture)
+    extra: dict = {}   # only what this task needs, so run_agent's plain call shape is unchanged
+    if fixture:
+        extra["argv"] = [verifiers.resolve(a, fixture) for a in task["argv"]]
+        write_json(run_dir / "task.json", {**task, "today": today, "argv_resolved": extra["argv"]})
+    keys = [verifiers.resolve(k, fixture) for k in verifiers.observations_for(task)]
+    write_json(run_dir / "ground_truth_before.json", verifiers.observe_all(client, keys))
+
+    if task.get("interference"):
+        def on_gate():
+            try:
+                done = fixtures.interfere(client, task["interference"], fixture)
+            except Exception as e:
+                done = {"kind": task["interference"], "at": time.time(),
+                        "error": f"{type(e).__name__}: {e}"[:300]}
+            write_json(run_dir / "interference.json", done)  # before the agent is released
+        extra["on_gate"] = on_gate
+    result = run_agent(task, run_id, today, write, run_dir, timeout_s, **extra)
+    write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
+    if fixture:
+        write_json(run_dir / "fixture.json", {**fixture, "retired": fixtures.retire(client, fixture)})
+    return result
 
 
 def select_tasks(data: dict, task_ids: str | None) -> list[dict]:
@@ -137,7 +212,10 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
         left_s = (float("inf") if deadline is None
                   else deadline - time.monotonic() - TASK_RESERVE_S)
         timeout_s = min(agent_timeout_s, left_s)
-        if task.get("requires_llm") and llm_skip_reason:
+        if task.get("requires_write") and not write:
+            entry.update(status="skipped", reason="write task: needs a --write batch")
+            print(f"  - {task['id']}: skipped (write task, dry batch)", flush=True)
+        elif task.get("requires_llm") and llm_skip_reason:
             entry.update(status="skipped", reason=llm_skip_reason)
             print(f"  - {task['id']}: skipped ({llm_skip_reason})", flush=True)
         elif left_s < min(MIN_AGENT_S, agent_timeout_s):
@@ -146,11 +224,7 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
         else:
             run_dir = RUNS_DIR / run_id
             try:
-                write_json(run_dir / "task.json", {**task, "today": data["today"]})
-                keys = verifiers.observations_for(task)
-                write_json(run_dir / "ground_truth_before.json", verifiers.observe_all(client, keys))
-                result = run_agent(task, run_id, data["today"], write, run_dir, timeout_s)
-                write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
+                result = run_task(client, task, run_id, data["today"], write, run_dir, timeout_s)
             except Exception as e:  # one broken task must not cost the rest of the batch
                 entry.update(status="error", run_dir=str(run_dir),
                              reason=f"{type(e).__name__}: {e}"[:500])

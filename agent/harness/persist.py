@@ -40,9 +40,11 @@ def record_run(client: MCPClient, run: TaskRun) -> list[str]:
     try:
         client.call("AgentSession.update", {
             "id": run.session_id,
-            "total_tool_calls": len(run.steps),
+            # total_tool_calls isn't in this seat's AgentSession.update schema
+            # (additionalProperties false; rejected live 2026-10-15), so the
+            # count rides in metadata.
             "metadata": json.dumps({"run_id": run.run_id, "task_id": run.task_id,
-                                    "ended": run.ended}),
+                                    "ended": run.ended, "tool_calls": len(run.steps)}),
         })
     except Exception as e:
         warnings.append(f"AgentSession.update failed: {e}")

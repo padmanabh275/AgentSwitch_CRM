@@ -15,12 +15,17 @@ only words it, and that wording is checked against the finding.
 
 Usage:
     python3 run.py "What closes this month? Quote 500 SuryaTools Bench Vice 150mm" [--dry-run]
-    python3 run.py [--item ITEM] [--qty 500]
+    python3 run.py [--item ITEM] [--qty 500] [--deal DEAL_ID]
                    [--asks closing_this_month,at_risk,quote] [--today YYYY-MM-DD]
                    [--dry-run]
     python3 run.py --chat "Look up deal <id>" [--dry-run]
 
 --item takes an id, a code or a name (--item-id is an alias).
+
+--deal: make the quote a Quotation on that deal — drafted at the BOM price,
+read back, then sent (domain/quotations.py). The deal is re-read right
+before the write and the quote is refused if it has closed meanwhile.
+Under --dry-run nothing is written.
 
 --today: pin the date "this month" and "overdue" are judged against, for
 reproducible runs (the deal data itself is still live).
@@ -63,14 +68,15 @@ from transport.mcp_client import client_from_env, has_credentials
 RUN_ID_RE = re.compile(r"[\w.-]+")
 
 
-def build_query(asks: list[str], item: str | None, qty: int) -> str:
+def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = None) -> str:
     parts = []
     if "closing_this_month" in asks:
         parts.append("what closes this month")
     if "at_risk" in asks:
         parts.append("what is at risk")
     if "quote" in asks:
-        parts.append(f"quote {qty} units of {item or '(unspecified item)'} off the real BOM price")
+        parts.append(f"quote {qty} units of {item or '(unspecified item)'} off the real BOM price"
+                     + (f" as a quotation on deal {deal}" if deal else ""))
     query = ", and ".join(parts) + "?"
     return query[0].upper() + query[1:]  # not .capitalize(): it lowercases "BOM"
 
@@ -120,6 +126,8 @@ def main() -> int:
     ap.add_argument("--item", "--item-id", dest="item", default=None,
                     help="item to quote: id, code or name")
     ap.add_argument("--qty", type=int, default=500)
+    ap.add_argument("--deal", default=None, metavar="DEAL_ID",
+                    help="draft and send the quote as a Quotation on this deal")
     ap.add_argument("--asks", default=",".join(plans.ASKS),
                     help=f"comma-separated subset of {','.join(plans.ASKS)}")
     ap.add_argument("--chat", default=None, metavar="QUESTION",
@@ -149,7 +157,7 @@ def main() -> int:
 
     run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
                              + "-" + uuid.uuid4().hex[:6])
-    query = args.chat or args.question or build_query(asks, args.item, args.qty)
+    query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
                   prompt=query, dry_run=args.dry_run,
                   today=args.today.isoformat() if args.today else None,
@@ -158,7 +166,7 @@ def main() -> int:
     run.save(run_dir)  # on disk from the start: a crash leaves ended="running", not nothing
     t0 = time.time()
 
-    plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty}
+    plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty, "deal_id": args.deal}
     if args.question:
         # Classify before anything is written: a request we can't classify
         # shouldn't leave a session behind.
@@ -176,7 +184,8 @@ def main() -> int:
                               reason=f"route={intent['route']}",
                               seconds=round(time.time() - t0, 2)))
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
-        plan_args = {k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")}
+        plan_args = {**{k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")},
+                     "deal_id": args.deal}
 
     try:
         client = LoggedClient(client_from_env(env), run_dir / "calls.jsonl")

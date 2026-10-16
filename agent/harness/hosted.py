@@ -138,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data = runner.load_tasks()
         tasks = runner.select_tasks(data, args.tasks)
+        if not args.write and not args.tasks:
+            # Write tasks can't pass a dry run; listing them would only add
+            # failures to results.json. Name one with --tasks to see it skipped.
+            tasks = [t for t in tasks if not t.get("requires_write")]
         save()
         runner.run_batch(data, tasks, write=args.write, on_task_done=on_task_done,
                          agent_timeout_s=args.task_timeout, deadline=deadline)
