@@ -40,7 +40,7 @@ from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
 from harness import fixtures, gate, verifiers
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
-from transport.mcp_client import client_from_env
+from transport.mcp_client import client_from_env, instance_from_env
 
 TASKS_PATH = AGENT_DIR / "harness" / "tasks.json"
 TASKS_FORMAT = "t6-tasks-v1"
@@ -51,7 +51,18 @@ TASK_RESERVE_S = 60
 MIN_AGENT_S = 60
 
 
-def load_tasks(path: Path = TASKS_PATH) -> dict:
+def for_instance(task: dict, instance: str | None) -> dict:
+    """The task as it runs on `instance`: its by_instance[instance] fields
+    (e.g. an item ref that exists there) replace the defaults, which are
+    written for Suryodaya. by_instance itself is dropped; the instance is kept."""
+    base = {k: v for k, v in task.items() if k != "by_instance"}
+    override = (task.get("by_instance") or {}).get(instance) or {}
+    return {**base, **override, "instance": instance}
+
+
+def load_tasks(path: Path = TASKS_PATH, instance: str | None = None) -> dict:
+    """The task set, resolved for `instance` (default: the one the env's
+    credentials point at, see instance_from_env)."""
     data = read_json(path)
     if data.get("format") != TASKS_FORMAT:
         raise SystemExit(f"{path}: unsupported format {data.get('format')!r}")
@@ -61,7 +72,9 @@ def load_tasks(path: Path = TASKS_PATH) -> dict:
         raise SystemExit(f"{path}: duplicate task ids {dupes}")
     for t in data["tasks"]:
         verifiers.validate_task(t)
-    return data
+    instance = instance or instance_from_env(load_env())
+    return {**data, "instance": instance,
+            "tasks": [for_instance(t, instance) for t in data["tasks"]]}
 
 
 def llm_gateway_up(timeout: float = 3.0) -> bool:
@@ -197,12 +210,14 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
     batch_id = dt.datetime.now(verifiers.IST).strftime("%Y%m%dT%H%M%S")
     batch_dir = RUNS_DIR / "batches" / batch_id
     manifest = {"batch_id": batch_id, "started_at": dt.datetime.now(verifiers.IST).isoformat(),
+                "instance": data.get("instance"),
                 "write": write, "today": data["today"], "llm_gateway_up": llm_up,
                 "tasks_file": str(tasks_file), "runs": []}
     write_json(batch_dir / "manifest.json", manifest)
 
     client = client_from_env(load_env())
-    print(f"[batch {batch_id}] {len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
+    print(f"[batch {batch_id}] {data.get('instance') or 'unknown instance'}, "
+          f"{len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
           f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}", flush=True)
 
     for task in tasks:

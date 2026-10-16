@@ -7,5 +7,5 @@
 install = "pip install -r requirements.txt"
 run     = "python agent/run_hosted.py --budget-minutes 20 --task-timeout 180"
 results = "results.json"
-instances = ["suryodaya"]
+instances = ["suryodaya", "keystone"]
 timeout_minutes = 25

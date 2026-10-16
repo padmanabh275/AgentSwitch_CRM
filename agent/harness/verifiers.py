@@ -857,9 +857,19 @@ def observations_for(task: dict) -> list[str]:
     return keys
 
 
+# What a task's by_instance entry may replace: the request and what it's
+# checked against, never what kind of task it is (fixture, writes, LLM).
+INSTANCE_OVERRIDABLE = {"description", "argv", "expect", "verifiers"}
+
+
 def validate_task(task: dict) -> None:
     from harness.fixtures import FIXTURE_KINDS, INTERFERENCE_KINDS
     tid = task.get("id")
+    for instance, override in (task.get("by_instance") or {}).items():
+        bad = sorted(set(override) - INSTANCE_OVERRIDABLE)
+        if bad:
+            raise ValueError(f"task {tid}: by_instance.{instance} can't override {bad}")
+        validate_task({"id": f"{tid}@{instance}", **override})
     for spec in task.get("verifiers") or []:
         if spec.get("name") not in VERIFIERS:
             raise ValueError(f"task {tid}: unknown verifier {spec.get('name')!r}")

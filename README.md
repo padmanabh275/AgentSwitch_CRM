@@ -226,6 +226,19 @@ composite task no longer pins its quote to `quoted`: its item's
 decides the right outcome from live data, and no task currently guarantees
 the quoted path.
 
+**Instances.** Tasks are written for Suryodaya. A task whose data differs on
+Keystone carries a `by_instance.keystone` entry that replaces its `argv`,
+`expect`, `verifiers` or `description` there (Keystone's own item codes for
+the quote tasks, `plate` for the ambiguous one). The instance is
+`AGENTSWITCH_INSTANCE` on a hosted run, else whichever URL `AS` points at
+(Suryodaya when unset), and it's recorded in the batch manifest and each
+run's `task.json`. Run the set on Keystone locally with that seat's login:
+
+```bash
+AS=https://class.agentswitch.theschoolofai.in SURYODAYA_PW=<keystone pw> \
+  uv run python -m harness.runner
+```
+
 **Write tasks** (`"requires_write": true`; skipped in a dry batch, and left
 out of a dry hosted run). Each builds its own fixture first
 (`harness/fixtures.py`): a `T6-harness-<run_id>` deal walked to

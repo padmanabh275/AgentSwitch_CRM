@@ -26,6 +26,8 @@ import urllib.error
 import urllib.request
 
 SURYODAYA = "https://agentswitch.theschoolofai.in"
+KEYSTONE = "https://class.agentswitch.theschoolofai.in"
+INSTANCES = {"suryodaya": SURYODAYA, "keystone": KEYSTONE}
 
 NOT_FOUND = "not_found"
 INVALID_ARGUMENTS = "invalid_arguments"
@@ -171,3 +173,15 @@ def client_from_env(env: dict) -> MCPClient:
         return MCPClient(env.get("EMAIL", ""), "", base_url=base, token=env["TOKEN"])
     raise RuntimeError("no AgentSwitch credentials: set AGENTSWITCH_TOKEN, or EMAIL + "
                        "SURYODAYA_PW, or TOKEN (in agent/.env or the repo's .env)")
+
+
+def instance_from_env(env: dict) -> str | None:
+    """Which instance client_from_env(env) talks to: AGENTSWITCH_INSTANCE if
+    the hosted run set it, else the name of the base URL it would use
+    (AS defaults to Suryodaya). None for a URL that isn't in INSTANCES."""
+    if env.get("AGENTSWITCH_INSTANCE"):
+        return env["AGENTSWITCH_INSTANCE"]
+    base = (env.get("AGENTSWITCH_BASE_URL") if env.get("AGENTSWITCH_TOKEN") else env.get("AS")) \
+        or SURYODAYA
+    base = base.rstrip("/")
+    return next((name for name, url in INSTANCES.items() if url == base), None)
