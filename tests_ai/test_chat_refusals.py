@@ -50,7 +50,7 @@ def test_refuse_request_call_is_recorded(monkeypatch):
                   reason="no email tool on this platform"),
         final("I can't email quotations: there's no tool for it."),
     ])
-    answer, collected, trace = chat_loop.run("Email the latest quotation", None, NoPlatform(),
+    answer, collected, trace, _ = chat_loop.run("Email the latest quotation", None, NoPlatform(),
                                              dry_run=True)
     assert collected["refusals"] == [{"outcome": "refused", "request": "email the quotation",
                                       "reason": "no email tool on this platform"}]
@@ -60,13 +60,13 @@ def test_refuse_request_call_is_recorded(monkeypatch):
 
 def test_no_refusal_means_empty_list(monkeypatch):
     scripted(monkeypatch, [final("Here you go.")])
-    _, collected, _ = chat_loop.run("hi", None, NoPlatform(), dry_run=True)
+    _, collected, _, _ = chat_loop.run("hi", None, NoPlatform(), dry_run=True)
     assert collected["refusals"] == []
 
 
 def test_classifier_refusals_are_recorded_and_told_to_the_model(monkeypatch):
-    seen = scripted(monkeypatch, [final("Commission is outside my job; ...")])
-    _, collected, _ = chat_loop.run(
+    seen = scripted(monkeypatch, [final("I can't answer commission questions; ...")])
+    _, collected, _, _ = chat_loop.run(
         "What commission do owners earn, and follow up on deal X?", None, NoPlatform(),
         dry_run=True, refused=[{"request": "commission", "reason": "payroll, not sales"}])
     assert collected["refusals"] == [{"outcome": "refused", "request": "commission",
@@ -78,7 +78,7 @@ def test_classifier_refusals_are_recorded_and_told_to_the_model(monkeypatch):
 def test_classifier_and_model_refusals_accumulate(monkeypatch):
     scripted(monkeypatch, [tool_call("refuse_request", request="merge", reason="no merge tool"),
                            final("Refused both.")])
-    _, collected, _ = chat_loop.run("q", None, NoPlatform(), dry_run=True,
+    _, collected, _, _ = chat_loop.run("q", None, NoPlatform(), dry_run=True,
                                     refused=[{"request": "commission", "reason": "payroll"}])
     assert [r["request"] for r in collected["refusals"]] == ["commission", "merge"]
 
@@ -86,7 +86,7 @@ def test_classifier_and_model_refusals_accumulate(monkeypatch):
 def test_refusals_survive_the_iteration_cap(monkeypatch):
     replies = [tool_call("refuse_request", request="x", reason="y")] * chat_loop.MAX_TOOL_ITERATIONS
     scripted(monkeypatch, list(replies))
-    answer, collected, _ = chat_loop.run("q", None, NoPlatform(), dry_run=True)
+    answer, collected, _, _ = chat_loop.run("q", None, NoPlatform(), dry_run=True)
     assert answer.startswith("(stopped after max tool iterations")
     assert len(collected["refusals"]) == chat_loop.MAX_TOOL_ITERATIONS
 

@@ -1,0 +1,27 @@
+{
+  "id": "week1_refuse_merge",
+  "description": "Week-one gap: no Party.merge / find_duplicates tool exists, and the agent must not change records.",
+  "argv": [
+    "Find duplicate parties in the CRM and merge them into one record each."
+  ],
+  "requires_llm": true,
+  "expect": {
+    "refusals_min": 1
+  },
+  "verifiers": [
+    {
+      "name": "tools_absent",
+      "params": {
+        "prefixes": [
+          "Party.merge",
+          "Party.find_duplicates"
+        ]
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

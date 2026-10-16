@@ -1,0 +1,34 @@
+{
+  "id": "quote_bom_unpriced",
+  "description": "Item has a BOM but no standard_rate: escalate, never quote a list price.",
+  "argv": [
+    "--asks",
+    "quote",
+    "--item",
+    "ST-VICE-150",
+    "--qty",
+    "500"
+  ],
+  "requires_llm": false,
+  "expect": {
+    "sections": {
+      "closing_this_month": "not_requested",
+      "at_risk": "not_requested",
+      "quote": "escalated"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "quote_matches_db",
+      "params": {
+        "ref": "ST-VICE-150",
+        "qty": 500
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

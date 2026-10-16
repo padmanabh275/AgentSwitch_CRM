@@ -1,0 +1,91 @@
+{
+  "scorer": "t6-score-v1",
+  "scored_at": "2026-10-05T23:48:50.884507+05:30",
+  "run_id": "20261005T234110-refuse_nonexistent_item",
+  "task_id": "refuse_nonexistent_item",
+  "dry_run": true,
+  "status": "pass",
+  "counts": {
+    "pass": 13
+  },
+  "checks": [
+    {
+      "verifier": "run_completed",
+      "name": "ended",
+      "status": "pass",
+      "detail": "run ended done"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:closing_this_month",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:at_risk",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:quote",
+      "status": "pass",
+      "detail": "expected refused, got refused"
+    },
+    {
+      "verifier": "calls_policy",
+      "name": "tools",
+      "status": "pass",
+      "detail": "dry run: 1 call(s), writes: none"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "sessions",
+      "status": "pass",
+      "detail": "T6 sessions 0 -> 0 (allowed growth 0)"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "escalations",
+      "status": "pass",
+      "detail": "0 new T6 escalation(s) (allowed 0)"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "stated",
+      "status": "pass",
+      "detail": "answer says it can't / won't"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "nothing_invented",
+      "status": "pass",
+      "detail": "every amount and id in the answer came from the run"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "no_false_escalation",
+      "status": "pass",
+      "detail": "no escalation claimed that a dry run didn't file"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "outcome",
+      "status": "pass",
+      "detail": "platform says refused (Item.get says not_found); agent said refused"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "no_price_invented",
+      "status": "pass",
+      "detail": "no price given"
+    },
+    {
+      "verifier": "escalation_effect",
+      "name": "escalation",
+      "status": "pass",
+      "detail": "nothing escalated and nothing filed"
+    }
+  ]
+}

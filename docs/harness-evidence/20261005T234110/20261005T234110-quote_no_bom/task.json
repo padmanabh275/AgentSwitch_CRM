@@ -1,0 +1,34 @@
+{
+  "id": "quote_no_bom",
+  "description": "Item has no BOM at all: escalate.",
+  "argv": [
+    "--asks",
+    "quote",
+    "--item",
+    "ASP-H-011",
+    "--qty",
+    "500"
+  ],
+  "requires_llm": false,
+  "expect": {
+    "sections": {
+      "closing_this_month": "not_requested",
+      "at_risk": "not_requested",
+      "quote": "escalated"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "quote_matches_db",
+      "params": {
+        "ref": "ASP-H-011",
+        "qty": 500
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

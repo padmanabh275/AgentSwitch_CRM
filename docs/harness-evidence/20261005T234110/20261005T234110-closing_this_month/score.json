@@ -1,0 +1,74 @@
+{
+  "scorer": "t6-score-v1",
+  "scored_at": "2026-10-05T23:48:50.868122+05:30",
+  "run_id": "20261005T234110-closing_this_month",
+  "task_id": "closing_this_month",
+  "dry_run": true,
+  "status": "pass",
+  "counts": {
+    "pass": 9,
+    "skip": 1
+  },
+  "checks": [
+    {
+      "verifier": "run_completed",
+      "name": "ended",
+      "status": "pass",
+      "detail": "run ended done"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:closing_this_month",
+      "status": "pass",
+      "detail": "expected answered, got answered"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:at_risk",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:quote",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "calls_policy",
+      "name": "tools",
+      "status": "pass",
+      "detail": "dry run: 3 call(s), writes: none"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "sessions",
+      "status": "pass",
+      "detail": "T6 sessions 0 -> 0 (allowed growth 0)"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "escalations",
+      "status": "pass",
+      "detail": "0 new T6 escalation(s) (allowed 0)"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "applies",
+      "status": "skip",
+      "detail": "task does not expect a refusal"
+    },
+    {
+      "verifier": "deal_set_matches_db[closing_this_month]",
+      "name": "ids",
+      "status": "pass",
+      "detail": "agent 1, platform 1; only agent: -; only platform: -"
+    },
+    {
+      "verifier": "deal_set_matches_db[closing_this_month]",
+      "name": "total",
+      "status": "pass",
+      "detail": "agent {'INR': 264000.0}, platform values for the agent's ids {'INR': 264000.0}"
+    }
+  ]
+}

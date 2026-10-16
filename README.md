@@ -23,9 +23,13 @@ uv run python agent/run.py --item "SP2319/3567 #3567" --qty 500 --dry-run   # sa
 A free-text question is classified by the LLM (`llm/intent.py`) into the three
 standard questions, the item and quantity as written, out-of-scope parts, and
 anything else. The first three go to the task graph; out-of-scope parts are
-refused there; any other in-scope request goes to the chat loop. Running with
-flags only skips the classification, which makes it the reproducible path for
-grading.
+refused there; any other in-scope request goes to the chat loop. Out of scope
+means not a sales agent's job *or* an action the agent has no tool for (email,
+follow-up sequences, invoices, record changes). A reply with no JSON is asked
+once more with a bigger budget; if that fails too, the question goes to the
+chat loop instead of ending the run, and the failure stays on the run record.
+Running with flags only skips the classification, which makes it the
+reproducible path for grading.
 
 | Flag | Effect |
 |---|---|
@@ -97,6 +101,10 @@ refuse_1..n (out-of-scope parts) ───────────────�
 - **The graph extends itself.** `RulePlanner` adds `escalate_quote` when the item
   has no BOM price, and one full `reread_deals` when the snapshot came back
   incomplete; the nodes that need the new result wait for it.
+- **The chat loop's answer is checked against its tool trace** (`verify_chat_answer`):
+  no claimed escalation that wasn't filed (a dry run files nothing), no id or
+  `ESC-` number from outside the trace, and "I can't" said plainly when a tool
+  refused or escalated. One rewrite, then a template built from the tool results.
 - **The prose is checked against the finding.** `llm/verify.py` rejects an
   answer that states an id, escalation number or amount not in the finding, or
   leaves out a required fact (section totals, undated-deal count, an
@@ -148,6 +156,13 @@ need one: `standard_rate` is a read-only field on `Item` (in its
 data it is set on 27 items, all of which have a BOM, and never on an item
 without one. So it's manufacturing's BOM costing, readable from an entity this
 seat owns. (Instructor to confirm this is the intended field.)
+
+> **Since 2026-10-05 the platform hides `standard_rate` from this seat.** `Item`'s
+> `_redacted_fields` now lists `standard_rate` and `standard_rate_updated_at` (with
+> `purchase_rate`), and every item reads it as null. So **every quote currently
+> escalates**. The reason says the BOM price is *hidden from this seat*, never that it
+> isn't set (`bom_price_redacted: true` in the quote section). The quoting path below
+> still works if the field becomes visible again.
 - The item is looked up by id, code or name. No match or several matches are
   refused ("which one?"), and so is a quote with no stated quantity.
 - **With a BOM price:** the quote is `standard_rate` × qty, before tax and
@@ -215,16 +230,22 @@ default); tasks needing the LLM are skipped when the gateway is down.
 **Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
 `id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
 outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
-closing this month, at risk, the composite question, the escalated quote
-outcomes (with and without a BOM), four refusals
-(nonexistent item, ambiguous item, no item, nonexistent deal via chat), and
+closing this month, at risk, the composite question (`composite_bom_hidden`:
+the BOM price is redacted for this seat; the quote outcome isn't pinned, so
+`quote_matches_db` decides it from live data, and no task currently
+guarantees the quoted path), the escalated quote with and without a BOM,
+four refusals
+(nonexistent item, ambiguous item, no item, nonexistent deal via chat), one
+refusal the seat is *not permitted* to make (`refuse_not_permitted_mark_lost`:
+the platform offers this seat `Deal.mark_lost.*`, the agent must not use it,
+and the deal's stage must not move; the deal is Team 6's own test record), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
 where refusal is correct because the platform has no tool for it, and two
-**write tasks** (below). The
-composite task no longer pins its quote to `quoted`: its item's
-`standard_rate` was cleared on the shared instance, so `quote_matches_db`
-decides the right outcome from live data, and no task currently guarantees
-the quoted path.
+**write tasks** (below). Every
+refusal task is also checked by `refusal_answer`, which reads the answer the
+user sees: it must say it refuses, and every amount and id in it must come
+from something the run read. Scored batches are in
+[`docs/harness-evidence/`](docs/harness-evidence/).
 
 **Instances.** Tasks are written for Suryodaya. A task whose data differs on
 Keystone carries a `by_instance.keystone` entry that replaces its `argv`,
@@ -274,6 +295,8 @@ ground truth, so a bug in the agent can't pass its own check.
 | `tools_absent` | `tools/list` has no tool for the request, and none was called |
 | `quotation_written` | the fixture deal has exactly one correct, sent quotation from this seat; the deal is untouched |
 | `stale_deal_guard` | after the harness closed the deal: re-read, no quotation written, the change kept, refusal names it |
+| `action_not_taken` | `tools/list` *does* offer the tool (so refusing is policy), it wasn't called, and the deal's stage is unchanged (`drift` if someone else moved it) |
+| `refusal_answer` | on every refusal task: the answer says it refuses, every amount and id in it came from the run, and a dry run doesn't claim an escalation it never filed |
 | every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode, and a write task's own `extra_writes`); T6 session and escalation counts didn't grow in a dry run |
 
 Check statuses are `pass`, `fail`, `drift`, `skip` or `error`. **Drift:** the
