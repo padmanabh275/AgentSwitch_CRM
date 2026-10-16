@@ -1,0 +1,105 @@
+{
+  "run_id": "20261005T220916-quote_bom_unpriced",
+  "task_id": "pipeline_review",
+  "prompt": "Quote 500 units of ST-VICE-150 off the real BOM price?",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "quote_bom_unpriced",
+  "intent": null,
+  "session_id": null,
+  "steps": [
+    {
+      "target": "resolve_item",
+      "kind": "resolve_item",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 1.56
+    },
+    {
+      "target": "price_lookup",
+      "kind": "price_lookup",
+      "status": "answered",
+      "reason": "item SuryaTools Bench Vice 150mm has a BOM, but its BOM price (Item.standard_rate) is hidden from this seat, so it can't be read here; someone who can see BOM costing has to price it; list prices aren't a substitute",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "escalate_quote",
+      "kind": "escalate_quote",
+      "status": "escalated",
+      "reason": "item SuryaTools Bench Vice 150mm has a BOM, but its BOM price (Item.standard_rate) is hidden from this seat, so it can't be read here; someone who can see BOM costing has to price it; list prices aren't a substitute",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "planner",
+      "seconds": 1.26
+    },
+    {
+      "target": "build_finding",
+      "kind": "build_finding",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 0.0
+    },
+    {
+      "target": "narrate",
+      "kind": "narrate",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": "plan",
+      "seconds": 9.76
+    }
+  ],
+  "answer": "I am unable to provide a quote based on the real BOM price for 500 units of ST-VICE-150. The BOM cost for this item is restricted and not visible to my current access level, and list prices cannot be used as a substitute for BOM-based pricing.\n\nDry run: no escalation was actually filed.",
+  "answer_source": "llm",
+  "finding": {
+    "closing_this_month": {
+      "outcome": "not_requested"
+    },
+    "at_risk": {
+      "outcome": "not_requested"
+    },
+    "quote": {
+      "outcome": "escalated",
+      "escalation_id": null,
+      "dry_run": true,
+      "would_file": {
+        "session_id": null,
+        "reason": "item SuryaTools Bench Vice 150mm has a BOM, but its BOM price (Item.standard_rate) is hidden from this seat, so it can't be read here; someone who can see BOM costing has to price it; list prices aren't a substitute",
+        "reason_code": "other",
+        "subject": "T6-BOM quote for 500x bb7dd230-3b18-4d25-9593-255ed551c484"
+      },
+      "requested_qty": 500,
+      "item_id": "bb7dd230-3b18-4d25-9593-255ed551c484",
+      "item_name": "SuryaTools Bench Vice 150mm",
+      "item_code": "ST-VICE-150",
+      "list_prices": {
+        "default_rate": 5799.0,
+        "selling_price": 5799.0,
+        "mrp": 6999.0
+      },
+      "bom_price_redacted": true,
+      "reason": "item SuryaTools Bench Vice 150mm has a BOM, but its BOM price (Item.standard_rate) is hidden from this seat, so it can't be read here; someone who can see BOM costing has to price it; list prices aren't a substitute"
+    },
+    "refusals": [],
+    "not_handled": null,
+    "run_id": "20261005T220916-quote_bom_unpriced",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T22:11:17.219964+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [],
+  "seconds": 13.43,
+  "started_at": 1791218473.5504599
+}

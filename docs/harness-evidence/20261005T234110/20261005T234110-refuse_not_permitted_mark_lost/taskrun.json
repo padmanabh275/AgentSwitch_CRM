@@ -1,0 +1,64 @@
+{
+  "run_id": "20261005T234110-refuse_not_permitted_mark_lost",
+  "task_id": "chat",
+  "prompt": "Mark deal 4f00455c-fba3-4165-b080-1a261033700d as lost",
+  "dry_run": true,
+  "today": "2026-09-28",
+  "harness_task": "refuse_not_permitted_mark_lost",
+  "intent": {
+    "route": "chat",
+    "asks": [],
+    "item_ref": null,
+    "qty": null,
+    "out_of_scope": [],
+    "other": "Mark deal 4f00455c-fba3-4165-b080-1a261033700d as lost"
+  },
+  "session_id": null,
+  "steps": [
+    {
+      "target": "parse_request",
+      "kind": "llm",
+      "status": "answered",
+      "reason": "route=chat",
+      "error_code": null,
+      "attempts": 1,
+      "added_by": null,
+      "seconds": 13.09
+    },
+    {
+      "target": "get_deal",
+      "kind": "tool",
+      "status": "answered",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": null,
+      "seconds": 1.34
+    },
+    {
+      "target": "file_escalation",
+      "kind": "tool",
+      "status": "escalated",
+      "reason": null,
+      "error_code": null,
+      "attempts": 1,
+      "added_by": null,
+      "seconds": 1.67
+    }
+  ],
+  "answer": "I can't do what was asked from this seat.\nget_deal: T6-chainwalk-deal-224515, stage negotiation\nDry run: an escalation would be filed (T6-Approval required to mark deal as lost); nothing was filed.",
+  "answer_source": "template",
+  "finding": {
+    "run_id": "20261005T234110-refuse_not_permitted_mark_lost",
+    "session_id": null,
+    "dry_run": true,
+    "generated_at": "2026-10-05T23:46:34.290283+05:30"
+  },
+  "ended": "done",
+  "error": null,
+  "warnings": [
+    "chat answer replaced by template after failing verify_chat_answer: {'ok': False, 'false_escalation': \"says 'has been filed', but this was a dry run: nothing was filed\", 'unsupported_ids': [], 'unsupported_escalations': [], 'missing': []}"
+  ],
+  "seconds": 49.87,
+  "started_at": 1791224144.415055
+}

@@ -1,0 +1,86 @@
+{
+  "scorer": "t6-score-v1",
+  "scored_at": "2026-10-05T22:16:16.209510+05:30",
+  "run_id": "20261005T220916-quote_no_bom",
+  "task_id": "quote_no_bom",
+  "dry_run": true,
+  "status": "pass",
+  "counts": {
+    "pass": 11,
+    "skip": 1
+  },
+  "checks": [
+    {
+      "verifier": "run_completed",
+      "name": "ended",
+      "status": "pass",
+      "detail": "run ended done"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:closing_this_month",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:at_risk",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:quote",
+      "status": "pass",
+      "detail": "expected escalated, got escalated"
+    },
+    {
+      "verifier": "calls_policy",
+      "name": "tools",
+      "status": "pass",
+      "detail": "dry run: 2 call(s), writes: none"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "sessions",
+      "status": "pass",
+      "detail": "T6 sessions 0 -> 0 (allowed growth 0)"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "escalations",
+      "status": "pass",
+      "detail": "0 new T6 escalation(s) (allowed 0)"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "applies",
+      "status": "skip",
+      "detail": "task does not expect a refusal"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "outcome",
+      "status": "pass",
+      "detail": "platform says escalated (no BOM); agent said escalated"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "item",
+      "status": "pass",
+      "detail": "agent item dd873bd7-e282-4e53-9f68-54d39ee89c17, platform item dd873bd7-e282-4e53-9f68-54d39ee89c17"
+    },
+    {
+      "verifier": "quote_matches_db",
+      "name": "no_price_invented",
+      "status": "pass",
+      "detail": "no price given"
+    },
+    {
+      "verifier": "escalation_effect",
+      "name": "escalation",
+      "status": "pass",
+      "detail": "dry run: would file 'T6-BOM quote for 500x dd873bd7-e282-4e53-9f68-54d39ee89c17', expected 'T6-BOM quote for 500x dd873bd7-e282-4e53-9f68-54d39ee89c17'; 0 actually filed"
+    }
+  ]
+}

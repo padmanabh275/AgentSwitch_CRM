@@ -1,0 +1,86 @@
+{
+  "scorer": "t6-score-v1",
+  "scored_at": "2026-10-05T22:16:16.201636+05:30",
+  "run_id": "20261005T220916-at_risk",
+  "task_id": "at_risk",
+  "dry_run": true,
+  "status": "pass",
+  "counts": {
+    "pass": 11,
+    "skip": 1
+  },
+  "checks": [
+    {
+      "verifier": "run_completed",
+      "name": "ended",
+      "status": "pass",
+      "detail": "run ended done"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:closing_this_month",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:at_risk",
+      "status": "pass",
+      "detail": "expected answered, got answered"
+    },
+    {
+      "verifier": "expectations",
+      "name": "section:quote",
+      "status": "pass",
+      "detail": "expected not_requested, got not_requested"
+    },
+    {
+      "verifier": "calls_policy",
+      "name": "tools",
+      "status": "pass",
+      "detail": "dry run: 3 call(s), writes: none"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "sessions",
+      "status": "pass",
+      "detail": "T6 sessions 0 -> 0 (allowed growth 0)"
+    },
+    {
+      "verifier": "no_side_effects",
+      "name": "escalations",
+      "status": "pass",
+      "detail": "0 new T6 escalation(s) (allowed 0)"
+    },
+    {
+      "verifier": "refusal_answer",
+      "name": "applies",
+      "status": "skip",
+      "detail": "task does not expect a refusal"
+    },
+    {
+      "verifier": "deal_set_matches_db[at_risk]",
+      "name": "ids",
+      "status": "pass",
+      "detail": "agent 9, platform 9; only agent: -; only platform: -"
+    },
+    {
+      "verifier": "deal_set_matches_db[at_risk]",
+      "name": "total",
+      "status": "pass",
+      "detail": "agent {'INR': 6817734.14}, platform values for the agent's ids {'INR': 6817734.14}"
+    },
+    {
+      "verifier": "deal_set_matches_db[at_risk]",
+      "name": "reasons",
+      "status": "pass",
+      "detail": "9/9 flagged deals carry a reason"
+    },
+    {
+      "verifier": "deal_set_matches_db[at_risk]",
+      "name": "days_overdue",
+      "status": "pass",
+      "detail": "0 wrong, 0 moved"
+    }
+  ]
+}

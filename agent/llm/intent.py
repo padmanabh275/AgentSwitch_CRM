@@ -10,9 +10,16 @@ from __future__ import annotations
 
 import json
 
-from transport.llm_client import LLMError, call_llm
+from transport.llm_client import LLMError, call_llm, parse_json_object, with_schema_instruction
 
 ASKS = ("closing_this_month", "at_risk", "quote")
+
+# The JSON is under 200 tokens, but a reasoning model can spend most of a
+# small budget before writing it: the hosted run's model (deepseek-v4p1-flash)
+# returned empty content at 512. The retry asks again with more room and the
+# schema in the prompt instead of JSON mode.
+MAX_TOKENS = 2048
+RETRY_MAX_TOKENS = 4096
 
 SCHEMA = {
     "type": "object",
@@ -40,11 +47,11 @@ SCHEMA = {
                 },
                 "required": ["request", "reason"],
             },
-            "description": "Parts that are not this sales agent's job at all.",
+            "description": "Parts the agent must refuse: not a sales agent's job, or an action it has no tool for.",
         },
         "other": {
             "type": "string",
-            "description": "An in-scope sales/pipeline request not covered by asks (e.g. look up one deal or lead). Empty if none.",
+            "description": "An in-scope request the agent can do that isn't one of the asks: looking up one deal or lead. Empty if none.",
         },
     },
     "required": ["asks", "item_ref", "qty", "out_of_scope", "other"],
@@ -53,7 +60,13 @@ SCHEMA = {
 SYSTEM_PROMPT = """You classify requests sent to the Pipeline/Sales agent of \
 Suryodaya Precision Works. Do not answer the request; only classify it.
 
-The agent has three standard questions (asks):
+The agent can do only these things: answer its three standard questions, \
+look up one deal or lead, and escalate to a human colleague what it can't \
+do itself (e.g. a quote it can't price). \
+It cannot send email or messages, start follow-up sequences, raise or send \
+invoices, or create, change, merge or delete records.
+
+The agent's three standard questions (asks):
 - closing_this_month: which deals are expected to close this month.
 - at_risk: which deals are at risk (overdue, slipping).
 - quote: a price for some quantity of an item.
@@ -64,11 +77,15 @@ Fill the fields:
 Never invent one; empty if the user didn't name an item.
 - qty: for a quote, the number of units only if stated. Never assume a \
 default; 0 if not stated.
-- out_of_scope: parts that are not a sales agent's job at all, e.g. payroll, \
-salaries or commissions, HR, accounting/invoices, changing or deleting \
-records, or a discount beyond policy. Give a short reason for each.
-- other: an in-scope sales request that isn't one of the three questions, \
-e.g. "look up deal <id>" or "what's the status of lead X". Empty if none."""
+- out_of_scope: every part the agent must refuse, with a short reason each: \
+(a) not a sales agent's job at all, e.g. payroll, salaries or commissions, \
+HR, accounting, or a discount beyond policy; (b) an action the agent has no \
+tool for, even if it is sales work, e.g. emailing a quotation, starting a \
+follow-up sequence, raising an invoice, marking a deal lost or merging \
+records (reason: no tool for it).
+- other: an in-scope request the agent can do that isn't one of the three \
+questions, e.g. "look up deal <id>" or "what's the status of lead X". Never \
+put an action from (b) here. Empty if none."""
 
 
 class IntentError(Exception):
@@ -97,18 +114,47 @@ def validate(raw: dict) -> dict:
             "out_of_scope": out_of_scope, "other": other}
 
 
+def classifier_fallback(error: str) -> dict:
+    """The intent to run with when classification failed: the chat loop, with
+    nothing pre-decided. `classifier_error` keeps the reason on the record."""
+    return {"route": "chat", "asks": [], "item_ref": None, "qty": None,
+            "out_of_scope": [], "other": None, "classifier_error": error}
+
+
+def _reply_json(resp: dict):
+    """The classification in a reply, or None. Valid JSON that isn't an object
+    is returned as is, so validate() can say so."""
+    raw = resp.get("parsed")
+    if raw is not None:
+        return raw
+    text = resp.get("text") or ""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return parse_json_object(text)   # tolerates prose or a code fence around it
+
+
 def parse_request(query: str) -> dict:
-    """Raises IntentError if the gateway fails or returns something unusable."""
+    """Raises IntentError if the gateway fails or returns something unusable.
+
+    A reply with no JSON (empty, cut off, prose) is asked once more with a
+    bigger budget and the schema written into the prompt; the error names each
+    attempt's stop_reason and length, so a repeat failure says why.
+    """
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": query}]
-    try:
-        resp = call_llm(messages, max_tokens=512, response_schema=SCHEMA)
-    except LLMError as e:
-        raise IntentError(f"could not classify the request: {e}") from e
-    raw = resp.get("parsed")
-    if raw is None:
+    attempts = [(messages, MAX_TOKENS, SCHEMA),
+                (with_schema_instruction(messages, SCHEMA), RETRY_MAX_TOKENS, None)]
+    failures = []
+    for msgs, max_tokens, schema in attempts:
         try:
-            raw = json.loads(resp.get("text") or "")
-        except ValueError:
-            raise IntentError(f"classifier returned no JSON: {(resp.get('text') or '')[:200]!r}")
-    return validate(raw)
+            resp = call_llm(msgs, max_tokens=max_tokens, response_schema=schema)
+        except LLMError as e:
+            raise IntentError(f"could not classify the request: {e}") from e
+        raw = _reply_json(resp)
+        if raw is not None:
+            return validate(raw)
+        text = resp.get("text") or ""
+        failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
+                        f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")
+    raise IntentError("classifier returned no JSON: " + "; ".join(failures))

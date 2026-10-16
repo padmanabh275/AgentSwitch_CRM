@@ -1,0 +1,25 @@
+{
+  "id": "closing_this_month",
+  "description": "Open deals whose expected close date falls in the pinned IST month.",
+  "argv": [
+    "--asks",
+    "closing_this_month"
+  ],
+  "requires_llm": false,
+  "expect": {
+    "sections": {
+      "closing_this_month": "answered",
+      "at_risk": "not_requested",
+      "quote": "not_requested"
+    }
+  },
+  "verifiers": [
+    {
+      "name": "deal_set_matches_db",
+      "params": {
+        "section": "closing_this_month"
+      }
+    }
+  ],
+  "today": "2026-09-28"
+}

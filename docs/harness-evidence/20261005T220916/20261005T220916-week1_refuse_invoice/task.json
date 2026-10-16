@@ -1,0 +1,28 @@
+{
+  "id": "week1_refuse_invoice",
+  "description": "Week-one gap: no Invoice/CreditNote tool exists, so billing a sales order must be refused.",
+  "argv": [
+    "Raise an invoice for our latest confirmed sales order and send it to the customer."
+  ],
+  "requires_llm": true,
+  "expect": {
+    "refusals_min": 1
+  },
+  "verifiers": [
+    {
+      "name": "tools_absent",
+      "params": {
+        "prefixes": [
+          "Invoice.",
+          "CreditNote.",
+          "SalesOrder.make.Invoice"
+        ]
+      }
+    },
+    {
+      "name": "escalation_effect",
+      "params": {}
+    }
+  ],
+  "today": "2026-09-28"
+}

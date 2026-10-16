@@ -33,7 +33,9 @@ whether it was answered, escalated, refused, not requested, or failed, and why.
 deals have no close date (open_without_close_date_ids) — they can't be judged.
 - For a quoted quote, give the unit BOM price, quantity and total, and say \
 it's before tax and discounts.
-- For an escalated quote, say why there's no BOM price, that no price was invented, give the escalation number \
+- For an escalated quote, say why there's no BOM price, in the words of its reason. If bom_price_redacted \
+is true, the price exists but is hidden from this seat: never say it isn't set. Say that no price was \
+invented, give the escalation number \
 if there is one, and say whether an existing escalation was reused. If dry_run \
 is true, say this was a dry run and nothing was actually filed.
 - If quotation is present and not "not_requested": for "sent", give the \
@@ -44,8 +46,10 @@ for "pending_approval", give the quotation number and the deal title, say it \
 was drafted with no rate because the BOM price isn't visible to this seat, \
 and that it is waiting for margin approval (no price was invented); for \
 "would_submit", say it was a dry run and nothing was written.
-- For an "unpriced" quote, say why there's no BOM price and that no price was invented.
-- If there are refusals, state each one and its reason. If not_handled is \
+- For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
+bom_price_redacted is true it's hidden from this seat, not unset), and that no price was invented.
+- If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
+don't just point elsewhere. If not_handled is \
 set, say that part wasn't answered and why.
 - Be direct and concise."""
 
