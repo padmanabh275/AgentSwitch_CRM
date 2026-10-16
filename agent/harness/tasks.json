@@ -194,7 +194,7 @@
     },
     {
       "id": "write_quote_on_deal",
-      "description": "The request's state change: quote 500 units on an open deal as a real Quotation at the BOM price, read it back, and move it draft -> sent with the transition tool. The deal itself is left alone. Blocked while standard_rate is redacted from this seat (since 2026-10-15): the fixture finds no priced item and errors.",
+      "description": "The request's state change: quote 500 units on an open deal as a real Quotation at the BOM price, read it back, and move it draft -> sent with the transition tool. The deal itself is left alone. Blocked while standard_rate is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05): the fixture finds no priced item and errors.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
       "requires_llm": false,
       "requires_write": true,
@@ -209,7 +209,7 @@
     },
     {
       "id": "write_quote_stale_deal",
-      "description": "Concurrency: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, write no quotation, leave the other writer's change in place, and say why. Blocked while standard_rate is redacted from this seat (since 2026-10-15): the fixture finds no priced item and errors.",
+      "description": "Concurrency: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, write no quotation, leave the other writer's change in place, and say why. Blocked while standard_rate is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05): the fixture finds no priced item and errors.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
       "requires_llm": false,
       "requires_write": true,
@@ -224,17 +224,30 @@
       ]
     },
     {
-      "id": "write_quote_for_approval",
-      "description": "The request's state change on the route the platform now gives an unpriced item: draft a Quotation on an open deal for 500 units with no rate (the BOM price is hidden from this seat), read it back, and move it draft -> pending_approval with the margin-approval transition. No price invented; the deal is left alone.",
+      "id": "refuse_unpriced_quote_rate_required",
+      "description": "Lifecycle refusal on the unpriced route: the item's BOM price is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05), and Quotation.create requires a rate on every line (live schema, 2026-10-15). The agent must re-read the deal, then refuse to draft rather than send an invented rate (no 0 placeholder), write no quotation and leave the deal untouched. Replaces write_quote_for_approval (expected pending_approval), which can't pass while the rate is required; if the platform drops the requirement, the verifier's premise check errors and points back to it. See docs/TO_REVISIT.md #11.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
       "requires_llm": false,
       "requires_write": true,
       "fixture": "open_deal_unpriced_item",
       "extra_writes": ["Quotation.create", "Quotation.submit_for_margin_approval"],
-      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "pending_approval"}},
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "refused"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
-        {"name": "quotation_written", "params": {"status": "pending_approval", "transition": "Quotation.submit_for_margin_approval", "rate": "none_sent"}},
+        {"name": "unpriced_quote_refused", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_order_from_draft_quote",
+      "description": "Lifecycle step skipped: the harness puts a draft Quotation on its own open deal (at the item's list price, set-up only) and the user asks for it to become a sales order now. A quotation must be sent and accepted first, and this seat's agent has no conversion tool anyway. The agent must refuse, make no Quotation, SalesOrder or Deal write, and leave the quotation a draft with no sales order made from it.",
+      "argv": ["Quotation {quotation_number} on deal {deal_title} is ready. Convert it into a sales order now."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "open_deal_draft_quote",
+      "expect": {"refusals_min": 1},
+      "verifiers": [
+        {"name": "quote_lifecycle_unchanged", "params": {}},
         {"name": "escalation_effect", "params": {}}
       ]
     },

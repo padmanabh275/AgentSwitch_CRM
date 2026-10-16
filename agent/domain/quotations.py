@@ -199,11 +199,12 @@ def send_quotation(client: MCPClient, drafted: dict, dry_run: bool = False) -> d
 
 # ---------------------------------------------------------------- margin approval
 #
-# The route for an item this seat can't price. Since 2026-10-15 the seat
-# can't read standard_rate (redacted on Item.list/get) and has no
-# AgentEscalation.create; Quotation gained draft -> pending_approval
-# (submit_for_margin_approval) -> sent (release_approved_quote), with the
-# cost basis and margin fields redacted from us. So the quote goes on the
+# The route for an item this seat can't price. The seat can't read
+# standard_rate (redacted on Item.list/get by 2026-10-05; visible on
+# 2026-09-26) and, as noticed 2026-10-15, has no AgentEscalation.create;
+# Quotation gained draft -> pending_approval (submit_for_margin_approval) ->
+# sent (release_approved_quote), with the cost basis and margin fields
+# redacted from us. So the quote goes on the
 # deal with qty and item but no rate, and is submitted for margin approval:
 # whoever can see the cost prices it. This seat never sends a rate on this
 # route, so it can't invent one; whatever rate the platform stores on the
@@ -241,11 +242,25 @@ def _approval_problems(row: dict, args: dict) -> list[str]:
     return problems
 
 
+def line_rate_required(client: MCPClient) -> bool:
+    """Whether the live Quotation.create schema requires items[].rate.
+
+    Read from tools/list on every run, not assumed: on 2026-10-15 it was
+    required, which makes the unpriced route impossible for this seat."""
+    for tool in client.list_tools():
+        if tool.get("name") == "Quotation.create":
+            line = (((tool.get("inputSchema") or {}).get("properties") or {})
+                    .get("items") or {}).get("items") or {}
+            return "rate" in (line.get("required") or [])
+    return False
+
+
 def draft_for_approval(client: MCPClient, deal_read: dict, priced: dict, run_id: str,
                        dry_run: bool = False) -> dict:
     """Re-read the deal, then draft an unpriced quotation on it and read it back.
 
-    outcome: drafted, would_create (dry run), refused (the deal closed)."""
+    outcome: drafted, would_create (dry run), refused (the deal closed, or the
+    platform requires a line rate this seat can't see)."""
     first = deal_read["deal"]
     base = {"route": "margin_approval", "deal_id": first["id"], "deal_title": first["title"],
             "item_id": priced["item_id"], "requested_qty": priced["requested_qty"],
@@ -253,6 +268,13 @@ def draft_for_approval(client: MCPClient, deal_read: dict, priced: dict, run_id:
     deal, refusal = _reread_deal(client, first, base)
     if refusal:
         return refusal
+    if line_rate_required(client):
+        # No placeholder rate (e.g. 0) by default: a priced-looking line on a
+        # customer document is an invented price. See docs/TO_REVISIT.md #11.
+        return {**base, "outcome": "refused", "rate_required": True,
+                "reason": "not drafted: Quotation.create requires a rate on every line, and "
+                          "this seat can't see the item's BOM price (standard_rate is "
+                          "redacted), so any rate would be invented; nothing was written"}
     args = approval_args(deal, priced, run_id)
     if dry_run:
         return {**base, "outcome": "would_create", "dry_run": True, "would_create": args,
