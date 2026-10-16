@@ -24,6 +24,12 @@ _DOMAIN_TO_STATUS = {
     "answered": ANSWERED,
     "quoted": ANSWERED,
     "unpriced": ANSWERED,
+    "drafted": ANSWERED,        # quotation created and read back
+    "would_create": ANSWERED,   # dry run
+    "sent": ANSWERED,
+    "would_send": ANSWERED,
+    "pending_approval": ANSWERED,   # unpriced quotation submitted for margin approval
+    "would_submit": ANSWERED,       # dry run
     "refused": REFUSED,
     "escalated": ESCALATED,
     "deferred": DEFERRED,

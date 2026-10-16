@@ -38,6 +38,16 @@ is true, the price exists but is hidden from this seat: never say it isn't set. 
 invented, give the escalation number \
 if there is one, and say whether an existing escalation was reused. If dry_run \
 is true, say this was a dry run and nothing was actually filed.
+- If quotation is present and not "not_requested": for "sent", give the \
+quotation number, the deal title and that it was sent; for "refused", say \
+no quotation was drafted or sent and why (e.g. the deal changed underneath \
+the run); for "would_send", say it was a dry run and nothing was written; \
+for "pending_approval", give the quotation number and the deal title, say it \
+was drafted with no rate because the BOM price isn't visible to this seat, \
+and that it is waiting for margin approval (no price was invented); for \
+"would_submit", say it was a dry run and nothing was written.
+- For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
+bom_price_redacted is true it's hidden from this seat, not unset), and that no price was invented.
 - If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
 don't just point elsewhere. If not_handled is \
 set, say that part wasn't answered and why.
@@ -99,8 +109,32 @@ def render_template(finding: dict) -> str:
         else:
             reused = " (existing open escalation reused)" if q.get("reused_existing") else ""
             out.append(f"Quote: can't price it ({q.get('reason')}). Escalated as {q.get('number') or q.get('escalation_id')}{reused}. No price invented.")
+    elif o == "unpriced":
+        out.append(f"Quote: can't price it ({q.get('reason')}). No price invented.")
     elif o != "not_requested":
         out += _not_answered("Quote", q)
+
+    qt = finding.get("quotation") or {}
+    qo = qt.get("outcome")
+    if qo == "sent":
+        out.append(f"Quotation {qt.get('number')} drafted on deal {qt.get('deal_title')!r} for "
+                   f"{qt.get('requested_qty')} units at {_fmt_inr(qt.get('unit_price'))} = "
+                   f"{_fmt_inr(qt.get('expected_net_total'))} before tax, and sent (read back as sent).")
+    elif qo == "would_send":
+        out.append(f"Quotation: dry run — a quotation on deal {qt.get('deal_title')!r} would be "
+                   "drafted and sent; nothing was written.")
+    elif qo == "pending_approval":
+        out.append(f"Quotation {qt.get('number')} drafted on deal {qt.get('deal_title')!r} for "
+                   f"{qt.get('requested_qty')} units with no rate (the BOM price isn't visible "
+                   "to this seat), and submitted for margin approval (read back as "
+                   "pending_approval). No price invented.")
+    elif qo == "would_submit":
+        out.append(f"Quotation: dry run — an unpriced quotation on deal {qt.get('deal_title')!r} "
+                   "would be drafted and submitted for margin approval; nothing was written.")
+    elif qo == "refused":
+        out.append(f"Quotation: refused — {qt.get('reason')}. No quotation was sent.")
+    elif qo and qo != "not_requested":
+        out += _not_answered("Quotation", qt)
 
     for ref in finding.get("refusals") or []:
         out.append(f"Refused: {ref.get('request')} — {ref.get('reason')}")

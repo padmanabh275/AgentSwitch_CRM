@@ -1,7 +1,7 @@
 """Escalation filing (AgentEscalation.create). Zero LLM."""
 from __future__ import annotations
 
-from transport.mcp_client import MCPClient
+from transport.mcp_client import MCPClient, MCPToolError
 
 T6_PREFIX = "T6-"
 
@@ -70,4 +70,14 @@ def file_escalation(client: MCPClient, session_id: str | None, reason: str,
     if dry_run:
         return {"outcome": "escalated", "escalation_id": None, "dry_run": True,
                 "would_file": args}
-    return _summary(client.call("AgentEscalation.create", args), reused=False)
+    try:
+        created = client.call("AgentEscalation.create", args)
+    except MCPToolError as e:
+        # Removed from this seat's catalogue on 2026-10-15. Nobody was
+        # paged, so say so rather than fail the branch.
+        if e.code != "tool_not_available":
+            raise
+        return {"outcome": "refused", "escalation_id": None, "would_file": args,
+                "reason": "can't escalate: AgentEscalation.create isn't available to this "
+                          "seat, so nobody was asked to price it"}
+    return _summary(created, reused=False)

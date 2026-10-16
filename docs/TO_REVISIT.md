@@ -148,6 +148,72 @@ is an assumption; it hasn't been observed.
 
 ---
 
+## 9. Should the quotation carry GST?
+
+**Raised:** 2026-10-15, adding the quotation write (`--deal`).
+
+**Context:** the agent drafts the Quotation at `standard_rate` × qty with no
+`taxes[]`, matching the quote section ("before tax and discounts"). A real
+quote to an Indian customer carries GST, which needs place of supply and
+the customer's registration; the deal carries neither. If tax is added it
+goes in record-level `taxes[]` (per-line tax fields don't reach the
+totals, bug `a6899ff7`).
+
+**Where:** `agent/domain/quotations.py` → `quotation_args()`.
+`quotation_written` checks `grand_total = net + tax`, so it holds either way.
+
+**Status:** unresolved.
+
+---
+
+## 10. First live run of the write tasks
+
+**Context:** `write_quote_on_deal` and `write_quote_stale_deal` have passed
+only an offline rehearsal against an in-memory platform. A live
+run (`python -m harness.runner --write --tasks write_quote_on_deal,write_quote_stale_deal`)
+creates, per task, a `T6-harness-…` lead and deal in the shared book, and
+for the first task a sent quotation. The fixture deals are marked lost
+afterwards. Not yet confirmed live: that `Quotation.create` accepts
+`deal_id` + `items` as sent, and that `Quotation.send` is still the name
+of the draft → sent transition.
+
+**Status:** needs explicit go-ahead (see #5).
+
+**Update 2026-10-15:** run live with go-ahead. The priced pair can't run:
+`standard_rate` is now redacted for this seat on Item.list/get, so the
+fixture finds no priced item and errors before writing anything.
+`AgentEscalation.create` has also left the seat's catalogue
+(`tool_not_available`); the escalate path now returns a refusal saying so
+instead of erroring. Two tasks were added on the platform's new route
+(`Quotation.submit_for_margin_approval` draft → pending_approval):
+`write_quote_for_approval_stale_deal` **passed live, 22/22** (batch
+20261015T224411); `write_quote_for_approval` fails at `Quotation.create`
+with `invalid_arguments`, because a line item requires `rate` and this
+route sends none (see #11). Also fixed live: `AgentSession.update` rejected
+`total_tool_calls` (not in the schema), and `Lead.make.Deal` without
+products returns a wrapper the old unwrap didn't recognise.
+
+---
+
+## 11. What rate goes on a quotation line the seat can't price?
+
+**Raised:** 2026-10-15.
+
+**Context:** Quotation.create requires `items[].rate`. The BOM price is
+redacted from this seat, the cost basis and margin fields on Quotation are
+too, and there's no escalation tool any more. Options: (a) rate 0 as an
+explicit placeholder, submitted for margin approval — a ₹0 line on a
+customer document, which the brief's "never invent a price" may rule out;
+(b) a quotation with no lines and the request in `notes` (items isn't
+required at the top level) — untested, and margin approval of an empty
+quote may be meaningless; (c) ask the instructor what the intended route
+for an unpriced item is now.
+
+**Status:** open. Until decided, `write_quote_for_approval` fails honestly
+and no quotation is written.
+
+---
+
 ## Resolved
 
 ### Is `AgentMemory.create` worth keeping as the finding-storage step?

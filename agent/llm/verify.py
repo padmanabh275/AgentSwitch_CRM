@@ -107,6 +107,20 @@ def verify_claims(text: str, finding: dict) -> dict:
     elif quote.get("outcome") == "quoted" and not _mentions_amount(text, quote.get("total_price") or 0):
         missing.append(f"quote total {quote.get('total_price'):,.2f}")
 
+    quotation = finding.get("quotation") or {}
+    if quotation.get("outcome") == "sent" and quotation.get("number") \
+            and quotation["number"] not in text:
+        missing.append(f"quotation number {quotation['number']} and that it was sent")
+    elif quotation.get("outcome") == "refused" and not re.search(
+            r"refus|not (?:drafted|sent|created)|no quotation", text, re.I):
+        missing.append("no quotation was drafted or sent, and why")
+    elif quotation.get("outcome") == "pending_approval" and (
+            (quotation.get("number") and quotation["number"] not in text)
+            or not re.search(r"approv", text, re.I)):
+        missing.append(f"quotation number {quotation.get('number')} and that it awaits margin approval")
+    elif quotation.get("outcome") in ("would_send", "would_submit") and not re.search(r"dry[- ]run", text, re.I):
+        missing.append("dry run: no quotation was written")
+
     refusals = [r.get("request") for r in finding.get("refusals") or []]
     if refusals and not REFUSAL_RE.search(text):
         missing.append("that you can't do this, in so many words: " + "; ".join(map(str, refusals)))

@@ -52,6 +52,15 @@ def build_finding(args: dict, outcomes: dict[str, NodeOutcome], ctx: "RunContext
             finding[name] = _section(args["sections"][name], outcomes)
     # Out-of-scope parts refused at planning time, and an in-scope part the
     # plan doesn't cover. Always present, so the shape doesn't vary.
+    # The quote as a record, when the request named a deal (run.py --deal).
+    if args.get("quotation_requested"):
+        q = _section(args["sections"]["quotation"], outcomes)
+        if q.get("outcome") == "answered":   # only get_deal ran: nothing to write
+            q = {"outcome": "skipped", "deal_id": q.get("deal_id"),
+                 "reason": f"no quotation drafted: the quote was {finding['quote'].get('outcome')}"}
+        finding["quotation"] = q
+    else:
+        finding["quotation"] = {"outcome": "not_requested"}
     finding["refusals"] = [outcomes[i].data for i in args.get("refusals", []) if i in outcomes]
     finding["not_handled"] = args.get("not_handled")
     finding.update({

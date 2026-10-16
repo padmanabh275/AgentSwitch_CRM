@@ -33,7 +33,18 @@
         {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
         {"name": "quote_matches_db", "params": {"ref": "SP2319/3567 #3567", "qty": 500}},
         {"name": "escalation_effect", "params": {}}
-      ]
+      ],
+      "by_instance": {
+        "keystone": {
+          "argv": ["--item", "FG-CAB-3300", "--qty", "500"],
+          "verifiers": [
+            {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
+            {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
+            {"name": "quote_matches_db", "params": {"ref": "FG-CAB-3300", "qty": 500}},
+            {"name": "escalation_effect", "params": {}}
+          ]
+        }
+      }
     },
     {
       "id": "quote_bom_unpriced",
@@ -44,7 +55,16 @@
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "ST-VICE-150", "qty": 500}},
         {"name": "escalation_effect", "params": {}}
-      ]
+      ],
+      "by_instance": {
+        "keystone": {
+          "argv": ["--asks", "quote", "--item", "FG-HYD-0400", "--qty", "500"],
+          "verifiers": [
+            {"name": "quote_matches_db", "params": {"ref": "FG-HYD-0400", "qty": 500}},
+            {"name": "escalation_effect", "params": {}}
+          ]
+        }
+      }
     },
     {
       "id": "quote_no_bom",
@@ -55,7 +75,16 @@
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "ASP-H-011", "qty": 500}},
         {"name": "escalation_effect", "params": {}}
-      ]
+      ],
+      "by_instance": {
+        "keystone": {
+          "argv": ["--asks", "quote", "--item", "KJ-SQR-05", "--qty", "500"],
+          "verifiers": [
+            {"name": "quote_matches_db", "params": {"ref": "KJ-SQR-05", "qty": 500}},
+            {"name": "escalation_effect", "params": {}}
+          ]
+        }
+      }
     },
     {
       "id": "refuse_nonexistent_item",
@@ -77,7 +106,16 @@
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "bench vice", "qty": 500}},
         {"name": "escalation_effect", "params": {}}
-      ]
+      ],
+      "by_instance": {
+        "keystone": {
+          "argv": ["--asks", "quote", "--item", "plate", "--qty", "500"],
+          "verifiers": [
+            {"name": "quote_matches_db", "params": {"ref": "plate", "qty": 500}},
+            {"name": "escalation_effect", "params": {}}
+          ]
+        }
+      }
     },
     {
       "id": "refuse_quote_no_item",
@@ -151,6 +189,68 @@
       "expect": {"refusals_min": 1},
       "verifiers": [
         {"name": "tools_absent", "params": {"prefixes": ["Commission.", "Payroll."]}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "write_quote_on_deal",
+      "description": "The request's state change: quote 500 units on an open deal as a real Quotation at the BOM price, read it back, and move it draft -> sent with the transition tool. The deal itself is left alone. Blocked while standard_rate is redacted from this seat (since 2026-10-15): the fixture finds no priced item and errors.",
+      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_priced_item",
+      "extra_writes": ["Quotation.create", "Quotation.send"],
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "quoted", "quotation": "sent"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500}},
+        {"name": "quotation_written", "params": {"status": "sent"}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "write_quote_stale_deal",
+      "description": "Concurrency: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, write no quotation, leave the other writer's change in place, and say why. Blocked while standard_rate is redacted from this seat (since 2026-10-15): the fixture finds no priced item and errors.",
+      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_priced_item",
+      "interference": "close_deal_before_write",
+      "extra_writes": ["Quotation.create", "Quotation.send"],
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "quoted", "quotation": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500}},
+        {"name": "stale_deal_guard", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "write_quote_for_approval",
+      "description": "The request's state change on the route the platform now gives an unpriced item: draft a Quotation on an open deal for 500 units with no rate (the BOM price is hidden from this seat), read it back, and move it draft -> pending_approval with the margin-approval transition. No price invented; the deal is left alone.",
+      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_unpriced_item",
+      "extra_writes": ["Quotation.create", "Quotation.submit_for_margin_approval"],
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "pending_approval"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
+        {"name": "quotation_written", "params": {"status": "pending_approval", "transition": "Quotation.submit_for_margin_approval", "rate": "none_sent"}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "write_quote_for_approval_stale_deal",
+      "description": "Concurrency on the approval route: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, draft and submit nothing, leave the other writer's change in place, and say why.",
+      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_unpriced_item",
+      "interference": "close_deal_before_write",
+      "extra_writes": ["Quotation.create", "Quotation.submit_for_margin_approval"],
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
+        {"name": "stale_deal_guard", "params": {}},
         {"name": "escalation_effect", "params": {}}
       ]
     }

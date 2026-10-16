@@ -156,9 +156,12 @@ def escalate_quote(client: MCPClient, session_id: str | None, priced: dict,
     esc = file_escalation(client, session_id, reason=priced["reason"], reason_code="other",
                           subject=quote_subject(priced["item_id"], priced["requested_qty"]),
                           dry_run=dry_run)
-    return {**esc, **{k: priced.get(k) for k in ("requested_qty", "item_id", "item_name",
-                                                 "item_code", "list_prices", "bom_price_redacted",
-                                                 "reason")}}
+    out = {**esc, **{k: priced.get(k) for k in ("requested_qty", "item_id", "item_name",
+                                                "item_code", "list_prices", "bom_price_redacted",
+                                                "reason")}}
+    if esc.get("outcome") == "refused":   # the escalation tool is gone: say both why's
+        out["reason"] = f"{priced['reason']}; {esc['reason']}"
+    return out
 
 
 def attempt_quote(client: MCPClient, session_id: str | None, item_ref: str, qty: int,

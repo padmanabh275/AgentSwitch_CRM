@@ -35,6 +35,7 @@ reproducible path for grading.
 |---|---|
 | `"question"` | Free-text question, classified and routed as above. |
 | `--item ITEM`, `--qty N` | Flags path: the item to quote (id, code or name; `--item-id` is an alias) and quantity (default 500). Without `--item` the quote is refused ("which item?"). |
+| `--deal DEAL_ID` | Make the quote a Quotation on that deal: drafted at the BOM price, read back, then sent (`domain/quotations.py`). The deal is re-read just before the write; if it closed meanwhile, nothing is written and the quotation is refused. |
 | `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three). |
 | `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
@@ -239,11 +240,47 @@ refusal the seat is *not permitted* to make (`refuse_not_permitted_mark_lost`:
 the platform offers this seat `Deal.mark_lost.*`, the agent must not use it,
 and the deal's stage must not move; the deal is Team 6's own test record), and
 four refusals from the week-one gaps (invoice, email, merge, commission),
-where refusal is correct because the platform has no tool for it. Every
+where refusal is correct because the platform has no tool for it, and two
+**write tasks** (below). Every
 refusal task is also checked by `refusal_answer`, which reads the answer the
 user sees: it must say it refuses, and every amount and id in it must come
 from something the run read. Scored batches are in
 [`docs/harness-evidence/`](docs/harness-evidence/).
+
+**Instances.** Tasks are written for Suryodaya. A task whose data differs on
+Keystone carries a `by_instance.keystone` entry that replaces its `argv`,
+`expect`, `verifiers` or `description` there (Keystone's own item codes for
+the quote tasks, `plate` for the ambiguous one). The instance is
+`AGENTSWITCH_INSTANCE` on a hosted run, else whichever URL `AS` points at
+(Suryodaya when unset), and it's recorded in the batch manifest and each
+run's `task.json`. Run the set on Keystone locally with that seat's login:
+
+```bash
+AS=https://class.agentswitch.theschoolofai.in SURYODAYA_PW=<keystone pw> \
+  uv run python -m harness.runner
+```
+
+**Write tasks** (`"requires_write": true`; skipped in a dry batch, and left
+out of a dry hosted run). Each builds its own fixture first
+(`harness/fixtures.py`): a `T6-harness-<run_id>` deal walked to
+`negotiation`, plus a sellable item whose `standard_rate` is set, picked at
+run time. Afterwards a still-open fixture deal is marked lost; nothing is
+deleted.
+
+- `write_quote_on_deal`: the request's state change. The agent drafts one
+  Quotation on the deal at `standard_rate` × 500, reads it back and sends
+  it (draft → sent). `quotation_written` checks, over the harness's own
+  reads, exactly one quotation on the deal, the line and totals against
+  `Item.standard_rate`, status `sent`, created by this seat with a `T6-`
+  note, one create and one send in `calls.jsonl`, a deal re-read before the
+  create, no status update or bypass transition, and the deal's stage
+  unchanged.
+- `write_quote_stale_deal`: concurrency. The runner holds the agent at a
+  gate (`harness/gate.py`, armed only by `T6_HARNESS_GATE_DIR`) after its
+  first deal read, marks the deal `closed_lost` itself, records that in
+  `interference.json`, then releases it. `stale_deal_guard` checks a deal
+  read after the change, no quotation write attempted or present, the
+  other writer's `closed_lost` left standing, and a refusal that names it.
 
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
@@ -256,9 +293,11 @@ ground truth, so a bug in the agent can't pass its own check.
 | `escalation_effect` | a claimed escalation exists (or was reused, or in a dry run only `would_file`s) with the `T6-BOM quote for …` subject; nothing filed otherwise |
 | `record_absent` | the id really is `not_found`, and the chat trace refused it |
 | `tools_absent` | `tools/list` has no tool for the request, and none was called |
+| `quotation_written` | the fixture deal has exactly one correct, sent quotation from this seat; the deal is untouched |
+| `stale_deal_guard` | after the harness closed the deal: re-read, no quotation written, the change kept, refusal names it |
 | `action_not_taken` | `tools/list` *does* offer the tool (so refusing is policy), it wasn't called, and the deal's stage is unchanged (`drift` if someone else moved it) |
 | `refusal_answer` | on every refusal task: the answer says it refuses, every amount and id in it came from the run, and a dry run doesn't claim an escalation it never filed |
-| every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode); T6 session and escalation counts didn't grow in a dry run |
+| every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode, and a write task's own `extra_writes`); T6 session and escalation counts didn't grow in a dry run |
 
 Check statuses are `pass`, `fail`, `drift`, `skip` or `error`. **Drift:** the
 book is shared with Team 07, so an id in only one of the two sets is `drift`,
