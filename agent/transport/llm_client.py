@@ -140,7 +140,7 @@ def _call_openai(cfg, messages, tools, tool_choice, max_tokens, temperature,
             raise
         payload.pop("temperature", None)
         if payload.pop("response_format", None):
-            payload["messages"] = _with_schema_instruction(payload["messages"], response_schema)
+            payload["messages"] = with_schema_instruction(payload["messages"], response_schema)
         data = _post_openai(cfg, payload)
     return from_openai_response(data, want_json=bool(response_schema))
 
@@ -226,11 +226,11 @@ def from_openai_response(data: dict, want_json: bool = False) -> dict:
              "stop_reason": _FINISH.get(finish, finish), "model": data.get("model"),
              "usage": data.get("usage"), "parsed": None}
     if want_json:
-        reply["parsed"] = _parse_json_object(text)
+        reply["parsed"] = parse_json_object(text)
     return reply
 
 
-def _parse_json_object(text: str) -> dict | None:
+def parse_json_object(text: str) -> dict | None:
     """The JSON object in a reply, tolerating a ```json fence around it."""
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     candidate = fenced.group(1) if fenced else text.strip()
@@ -247,7 +247,7 @@ def _parse_json_object(text: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
-def _with_schema_instruction(messages: list[dict], schema: dict) -> list[dict]:
+def with_schema_instruction(messages: list[dict], schema: dict) -> list[dict]:
     note = ("Reply with only a JSON object (no prose, no code fence) matching this "
             "JSON Schema:\n" + json.dumps(schema))
     if messages and messages[0].get("role") == "system":

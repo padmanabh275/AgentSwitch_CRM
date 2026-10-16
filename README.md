@@ -23,9 +23,13 @@ uv run python agent/run.py --item "SP2319/3567 #3567" --qty 500 --dry-run   # sa
 A free-text question is classified by the LLM (`llm/intent.py`) into the three
 standard questions, the item and quantity as written, out-of-scope parts, and
 anything else. The first three go to the task graph; out-of-scope parts are
-refused there; any other in-scope request goes to the chat loop. Running with
-flags only skips the classification, which makes it the reproducible path for
-grading.
+refused there; any other in-scope request goes to the chat loop. Out of scope
+means not a sales agent's job *or* an action the agent has no tool for (email,
+follow-up sequences, invoices, record changes). A reply with no JSON is asked
+once more with a bigger budget; if that fails too, the question goes to the
+chat loop instead of ending the run, and the failure stays on the run record.
+Running with flags only skips the classification, which makes it the
+reproducible path for grading.
 
 | Flag | Effect |
 |---|---|
