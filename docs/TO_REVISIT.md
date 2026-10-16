@@ -172,7 +172,8 @@ of the draft → sent transition.
 **Status:** needs explicit go-ahead (see #5).
 
 **Update 2026-10-15:** run live with go-ahead. The priced pair can't run:
-`standard_rate` is now redacted for this seat on Item.list/get, so the
+`standard_rate` is redacted for this seat on Item.list/get (saved runs show it
+visible on 2026-09-26 and redacted by 2026-10-05; it was only noticed today), so the
 fixture finds no priced item and errors before writing anything.
 `AgentEscalation.create` has also left the seat's catalogue
 (`tool_not_available`); the escalate path now returns a refusal saying so
@@ -203,6 +204,34 @@ for an unpriced item is now.
 
 **Status:** open. Until decided, `write_quote_for_approval` fails honestly
 and no quotation is written.
+
+**Update 2026-10-16: refusal is the default.** `draft_for_approval` now reads
+the live `Quotation.create` schema each run (`line_rate_required`). If
+`items[].rate` is required, it refuses before any write, with the reason. If
+the platform drops the requirement, it drafts with no rate as before. Nothing
+is hardcoded to 0. `write_quote_for_approval` is replaced by
+`refuse_unpriced_quote_rate_required` (verifier `unpriced_quote_refused`).
+Its premise check errors if the rate stops being required.
+
+Why not a ₹0 placeholder by default: a draft can go straight to `sent`
+(`Quotation.send`), and a sent quote can become an order without acceptance
+(`convert_to_order.sent`). So if anything skips margin approval, ₹0 reaches
+a customer, or even a sales order. This seat has no `Quotation.delete` or
+cancel, so a failed submit would strand a ₹0 draft. The margin fields are
+redacted, so we can't confirm ₹0 even triggers approval.
+
+**If (a) is chosen later, as an opt-in fallback, not a default:**
+1. A setting `UNPRICED_PLACEHOLDER_RATE`. Unset means refuse (today's behaviour).
+2. Use it only if the margin-approval transition is in tools/list (checked
+   **before** the create) and the deal re-read shows it still open.
+3. Create, then submit at once, then read back. Anything but
+   `pending_approval` is an error that names the stranded quotation.
+4. The line description says "placeholder, not a price; set at margin
+   approval". The finding reports `rate_source: placeholder`, never as our
+   price.
+5. The verifier checks the stored rate equals the setting, the status is
+   `pending_approval`, and no send was made.
+6. Needs one live write to confirm ₹0 is accepted and routed to approval.
 
 ---
 
