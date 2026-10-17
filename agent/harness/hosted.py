@@ -31,10 +31,11 @@ import time
 import traceback
 from pathlib import Path
 
-from config import REPO_DIR
-from harness import runner, score
+from config import REPO_DIR, load_env
+from harness import fixtures, runner, score
 from harness.run_record import write_json
 from harness.verifiers import IST
+from transport.mcp_client import client_from_env
 
 RESULTS_PATH = REPO_DIR / "results.json"
 # A full 13-task batch takes 6-8 min; the slowest task on record took 50s.
@@ -43,6 +44,26 @@ BUDGET_MINUTES = 20
 EVIDENCE_CHARS = 500
 TITLE_CHARS = 200
 NOT_RUN = "not run: the harness stopped before reaching this task (timeout or crash)"
+# Credentials the evaluator injects. Evidence is what the platform stores.
+SECRET_ENV = ("AGENTSWITCH_TOKEN", "OPENAI_API_KEY")
+
+
+def scrub(text: str) -> str:
+    """Replace evaluator credentials if a failure message echoed them."""
+    for name in SECRET_ENV:
+        value = os.environ.get(name) or ""
+        if len(value) >= 8:
+            text = text.replace(value, f"<{name}>")
+    return text
+
+
+def omit_blocked_priced_tasks(tasks: list[dict], priced_available: bool) -> list[dict]:
+    """Priced-item write tasks error in the fixture while standard_rate is
+    redacted. Leaving them in results.json only adds failures. An explicit
+    --tasks list is not passed through here, so a named task can still be seen."""
+    if priced_available:
+        return tasks
+    return [t for t in tasks if t.get("fixture") != "open_deal_priced_item"]
 
 
 def check_score(task_score: dict) -> float:
@@ -78,7 +99,7 @@ def task_result(task: dict, entry: dict | None, task_score: dict | None, instanc
         "title": (task.get("description") or task["id"])[:TITLE_CHARS],
         "passed": passed,
         "score": check_score(task_score) if task_score else 0.0,
-        "evidence": evidence_for(entry, task_score)[:EVIDENCE_CHARS],
+        "evidence": scrub(evidence_for(entry, task_score))[:EVIDENCE_CHARS],
     }
 
 
@@ -88,7 +109,8 @@ def build_results(tasks: list[dict], entries: dict, scores: dict, instance: str,
                for t in tasks]
     if crash:
         results.append({"id": f"{instance}:harness", "title": "The harness ran to completion",
-                        "passed": False, "score": 0.0, "evidence": crash[:EVIDENCE_CHARS]})
+                        "passed": False, "score": 0.0,
+                        "evidence": scrub(crash)[:EVIDENCE_CHARS]})
     n_pass = sum(r["passed"] for r in results)
     model = os.environ.get("OPENAI_MODEL") or "glc_v5"
     summary = (f"{instance}: {n_pass}/{len(results)} tasks passed · {mode} · model {model}"
@@ -142,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
             # Write tasks can't pass a dry run; listing them would only add
             # failures to results.json. Name one with --tasks to see it skipped.
             tasks = [t for t in tasks if not t.get("requires_write")]
+        elif args.write and not args.tasks and any(
+                t.get("fixture") == "open_deal_priced_item" for t in tasks):
+            priced = fixtures.priced_item_available(client_from_env(load_env()))
+            before = len(tasks)
+            tasks = omit_blocked_priced_tasks(tasks, priced)
+            if len(tasks) != before:
+                print("[hosted] leaving out priced-item write tasks: "
+                      "no sellable item with a readable standard_rate", flush=True)
         save()
         runner.run_batch(data, tasks, write=args.write, on_task_done=on_task_done,
                          agent_timeout_s=args.task_timeout, deadline=deadline)

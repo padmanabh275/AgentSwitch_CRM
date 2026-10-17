@@ -83,6 +83,24 @@ def test_long_evidence_and_title_are_truncated():
     assert len(r["title"]) == hosted.TITLE_CHARS
 
 
+def test_omit_blocked_priced_tasks_drops_only_those():
+    tasks = [
+        {"id": "keep", "fixture": "open_deal_unpriced_item"},
+        {"id": "drop", "fixture": "open_deal_priced_item"},
+        {"id": "plain"},
+    ]
+    assert [t["id"] for t in hosted.omit_blocked_priced_tasks(tasks, False)] == ["keep", "plain"]
+    assert hosted.omit_blocked_priced_tasks(tasks, True) == tasks
+
+
+def test_scrub_removes_an_evaluator_token(monkeypatch):
+    monkeypatch.setenv("AGENTSWITCH_TOKEN", "super-secret-token-value")
+    leaked = {"status": "fail", "checks": [check("fail", detail="saw super-secret-token-value")]}
+    evidence = hosted.task_result(TASKS[0], {"seconds": 1}, leaked, "s")["evidence"]
+    assert "super-secret-token-value" not in evidence
+    assert "<AGENTSWITCH_TOKEN>" in evidence
+
+
 def test_build_results_with_crash_adds_harness_task():
     doc = hosted.build_results(TASKS, {}, {}, "keystone", "dry run", crash="RuntimeError: boom")
     assert_platform_format(doc)
