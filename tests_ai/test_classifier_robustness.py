@@ -19,7 +19,8 @@ import pytest
 
 import run as run_module
 from llm import intent
-from llm.intent import IntentError, classifier_fallback, parse_request
+from llm.chat_loop import SYSTEM_PROMPT
+from llm.intent import IntentError, classifier_fallback, parse_request, record_no_tool
 from transport.llm_client import LLMError
 
 CLASSIFIED = {"asks": [], "item_ref": "", "qty": 0,
@@ -132,7 +133,10 @@ def test_run_falls_back_to_chat_when_classifier_fails(monkeypatch, tmp_path, cap
     step = rec["steps"][0]
     assert step["target"] == "parse_request" and step["status"] == "error"
     assert any("classifier failed, routed to chat" in w for w in rec["warnings"])
-    assert seen == {"query": "What commission will owners earn?", "refused": []}
+    assert seen["query"] == "What commission will owners earn?"
+    assert seen["refused"] == [{"request": "commission",
+                                "reason": "not a sales agent's job (payroll)"}]
+    assert rec["intent"]["out_of_scope"] == seen["refused"]
 
 
 # --- issue 2: actions with no tool belong in out_of_scope -------------------------
@@ -148,3 +152,38 @@ def test_schema_descriptions_match_the_prompt():
     props = intent.SCHEMA["properties"]
     assert "no tool for" in props["out_of_scope"]["description"]
     assert "looking up one deal or lead" in props["other"]["description"]
+
+
+def test_email_filed_under_other_is_recorded_as_a_refusal():
+    """The hosted failure: the classifier put the email request in `other`."""
+    query = "Email the latest quotation to the deal's contact and start a follow-up sequence."
+    out = record_no_tool(
+        {"route": "chat", "asks": [], "item_ref": None, "qty": None,
+         "out_of_scope": [], "other": query},
+        query)
+    assert out["route"] == "graph"
+    assert out["other"] is None
+    assert out["out_of_scope"][0]["request"] == "email or follow-up sequence"
+
+
+def test_lookup_stays_on_the_chat_path():
+    out = record_no_tool(
+        {"route": "chat", "asks": [], "item_ref": None, "qty": None,
+         "out_of_scope": [], "other": "look up deal X"},
+        "look up deal X")
+    assert out["route"] == "chat" and out["other"] == "look up deal X"
+    assert out["out_of_scope"] == []
+
+
+def test_failed_classification_keeps_chat_but_records_the_refusal():
+    query = "What commission will each deal owner earn on the deals closing this month?"
+    out = record_no_tool(classifier_fallback("classifier returned no JSON"), query, keep_route=True)
+    assert out["route"] == "chat" and out["classifier_error"]
+    assert out["out_of_scope"][0]["request"] == "commission"
+
+
+def test_chat_prompt_names_the_no_tool_actions():
+    assert "record a refusal with refuse_request" in SYSTEM_PROMPT
+    for phrase in ("Emailing a quotation", "follow-up sequence", "merging records",
+                   "raising an invoice", "commission"):
+        assert phrase in SYSTEM_PROMPT
