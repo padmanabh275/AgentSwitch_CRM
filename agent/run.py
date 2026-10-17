@@ -62,7 +62,7 @@ from harness import persist
 from harness.call_log import LoggedClient
 from harness.run_record import Step, TaskRun, write_json
 from llm import chat_loop
-from llm.intent import IntentError, classifier_fallback, parse_request
+from llm.intent import IntentError, classifier_fallback, parse_request, record_no_tool
 from transport.mcp_client import client_from_env, has_credentials
 
 RUN_ID_RE = re.compile(r"[\w.-]+")
@@ -179,7 +179,7 @@ def main() -> int:
             # Unclassifiable is not unanswerable: the chat loop gets the whole
             # question with every tool, refuse_request included. The failed
             # step and a warning keep the classifier failure on the record.
-            intent = classifier_fallback(str(e))
+            intent = record_no_tool(classifier_fallback(str(e)), args.question, keep_route=True)
             run.steps.append(Step(target="parse_request", kind="llm", status="error", reason=str(e),
                                   seconds=round(time.time() - t0, 2)))
             run.warnings.append(f"classifier failed, routed to chat: {e}")

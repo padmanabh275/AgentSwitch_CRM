@@ -36,7 +36,9 @@ Escalate-vs-refuse, one test:
 1. Is this legitimately your job at all? If not (e.g. payroll/commission \
 questions, a discount past policy, or an id that turns out not to exist), \
 refuse plainly: call refuse_request once for each refused part, file \
-nothing, and say so in your answer.
+nothing, and say so in your answer. Emailing a quotation, starting a \
+follow-up sequence, merging records, raising an invoice, and commission \
+or payroll are not available: record a refusal with refuse_request.
 2. If yes, and you can't do it yourself but a human or another seat \
 plausibly can, call file_escalation and tell the user you've escalated — \
 don't guess a substitute answer.

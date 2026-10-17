@@ -9,6 +9,7 @@ quantity, rather than assuming either.
 from __future__ import annotations
 
 import json
+import re
 
 from transport.llm_client import LLMError, call_llm, parse_json_object, with_schema_instruction
 
@@ -92,6 +93,35 @@ class IntentError(Exception):
     pass
 
 
+# Actions this seat has no tool for. The hosted run's classifier filed
+# "email the quotation" under `other`, so the chat loop never recorded a
+# refusal. These patterns put that action back into out_of_scope. A lookup
+# that only mentions an email address does not match.
+_NO_TOOL = (
+    (re.compile(r"\be-?mails?\b.{0,80}\b(?:quot(?:e|ation)s?|follow-?up)\b"
+                r"|\bfollow-?up sequences?\b", re.I),
+     "email or follow-up sequence",
+     "no tool for sending email or starting a follow-up sequence"),
+    (re.compile(r"\binvoices?\b", re.I),
+     "invoice",
+     "no tool for raising or sending an invoice"),
+    (re.compile(r"\bmerge\b.{0,40}\b(?:part(?:y|ies)|records?|duplicates?)\b"
+                r"|\bduplicate parties\b", re.I),
+     "merge records",
+     "no tool for merging records"),
+    (re.compile(r"\b(?:commissions?|payroll|salar(?:y|ies))\b", re.I),
+     "commission",
+     "not a sales agent's job (payroll)"),
+)
+_LOOKUP = re.compile(r"\b(?:look(?:\s+|-)?up|lookup|status of|find)\b", re.I)
+
+
+def _route(asks: list, out_of_scope: list, other: str | None) -> str:
+    if asks or (out_of_scope and not other):
+        return "graph"
+    return "chat"   # anything else in scope — or unclassifiable — goes to the tool loop
+
+
 def validate(raw: dict) -> dict:
     """Normalise the LLM's classification. Pure; also used by tests."""
     if not isinstance(raw, dict):
@@ -106,12 +136,32 @@ def validate(raw: dict) -> dict:
     ]
     other = (raw.get("other") or "").strip() or None
 
-    if asks or (out_of_scope and not other):
-        route = "graph"
-    else:
-        route = "chat"   # anything else in scope — or unclassifiable — goes to the tool loop
-    return {"route": route, "asks": asks, "item_ref": item_ref, "qty": qty,
-            "out_of_scope": out_of_scope, "other": other}
+    return {"route": _route(asks, out_of_scope, other), "asks": asks, "item_ref": item_ref,
+            "qty": qty, "out_of_scope": out_of_scope, "other": other}
+
+
+def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict:
+    """Copy of `intent` with no-tool actions from `text` added to out_of_scope.
+
+    When `other` is itself that action (and not a lookup), it is cleared so
+    the request takes the graph path and the refusal is recorded in code.
+    `keep_route` leaves the route alone: a failed classification still goes
+    to the chat loop, but the refusal is already on the intent for the finding.
+    """
+    seen = {(o.get("request") or "").casefold() for o in intent.get("out_of_scope") or []}
+    found = []
+    for pattern, request, reason in _NO_TOOL:
+        if pattern.search(text or "") and request.casefold() not in seen:
+            found.append({"request": request, "reason": reason})
+            seen.add(request.casefold())
+    other = intent.get("other")
+    if other and not _LOOKUP.search(other) and any(p.search(other) for p, _, _ in _NO_TOOL):
+        other = None
+    out_of_scope = list(intent.get("out_of_scope") or []) + found
+    updated = {**intent, "out_of_scope": out_of_scope, "other": other}
+    if not keep_route:
+        updated["route"] = _route(updated.get("asks") or [], out_of_scope, other)
+    return updated
 
 
 def classifier_fallback(error: str) -> dict:
@@ -153,7 +203,7 @@ def parse_request(query: str) -> dict:
             raise IntentError(f"could not classify the request: {e}") from e
         raw = _reply_json(resp)
         if raw is not None:
-            return validate(raw)
+            return record_no_tool(validate(raw), query)
         text = resp.get("text") or ""
         failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
                         f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")
