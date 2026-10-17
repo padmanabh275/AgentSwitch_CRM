@@ -4,6 +4,9 @@
 # writes <repo>/results.json.
 # Write mode: the hosted instance is a throwaway copy, and without --write
 # every requires_write task (the lifecycle ones) is left out of the run.
+# While standard_rate is redacted, the two priced-item write tasks are
+# left out as well: their fixture cannot be built, so scoring them only
+# adds failures. The other write tasks still run.
 # Keep --budget-minutes a few minutes under timeout_minutes.
 install = "pip install -r requirements.txt"
 run     = "python agent/run_hosted.py --write --budget-minutes 20 --task-timeout 180"

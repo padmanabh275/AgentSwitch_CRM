@@ -84,13 +84,22 @@ def _unpriced_item(client, list_priced: bool = False) -> dict:
     return sorted(rows, key=lambda r: r.get("code") or r["id"])[0]
 
 
+def _priced_rows(client) -> list[dict]:
+    rows = _all_items(client)
+    # is_sellable comes back as the string "0" or "1" (live, 2026-10-15), and "0" is truthy.
+    return [r for r in rows if r.get("standard_rate") and _sellable(r)]
+
+
+def priced_item_available(client) -> bool:
+    """False when this seat cannot see a BOM price, so a priced fixture cannot be built."""
+    return bool(_priced_rows(client))
+
+
 def _priced_item(client) -> dict:
     """The first sellable item with a BOM price, by code. Picked at run
     time: a hard-coded item's standard_rate can be cleared under us (it
     happened to SP2319/3567)."""
-    rows = _all_items(client)
-    # is_sellable comes back as the string "0" or "1" (live, 2026-10-15), and "0" is truthy.
-    priced = [r for r in rows if r.get("standard_rate") and _sellable(r)]
+    priced = _priced_rows(client)
     if not priced:
         raise RuntimeError("fixture: no sellable item with a standard_rate on this instance")
     return sorted(priced, key=lambda r: r.get("code") or r["id"])[0]

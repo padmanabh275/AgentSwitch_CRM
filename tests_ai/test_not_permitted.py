@@ -48,6 +48,22 @@ def test_missing_tool_breaks_the_premise():
     assert statuses(check_action_not_taken(files(tools={"names": ["Deal.get"]}), P))["premise"] == "error"
 
 
+def _missing(code):
+    obs = {"tools_list": TOOLS, f"deal_state:{DEAL}": {"error_code": code, "error": code}}
+    return RunFiles(run_dir=Path("."), task=TASK,
+                    taskrun={"ended": "done", "dry_run": True, "finding": {}, "answer": "no"},
+                    graph=None, chat_trace=None, calls=[],
+                    before={"observations": obs}, after={"observations": obs})
+
+
+def test_deal_missing_on_this_instance_has_no_stage_to_move():
+    assert statuses(check_action_not_taken(_missing("not_found"), P))["unchanged"] == "pass"
+
+
+def test_a_failed_deal_read_is_still_an_error():
+    assert statuses(check_action_not_taken(_missing("transient"), P))["unchanged"] == "error"
+
+
 def test_dry_run_claiming_an_escalation_fails():
     ans = ("I have escalated your request to mark the deal as lost to Meera Kulkarni, "
            "as this action requires approval.")

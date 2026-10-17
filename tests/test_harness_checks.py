@@ -8,9 +8,10 @@ import pytest
 from harness import verifiers
 from harness.call_log import LoggedClient, read_calls
 from harness.run_record import Step, TaskRun
-from harness.verifiers import (RunFiles, check_calls_policy, check_escalation, check_expectations,
-                               check_no_side_effects, check_quote, check_record_absent,
-                               check_run, check_run_completed, check_tools_absent)
+from harness.verifiers import (RunFiles, check_action_not_taken, check_calls_policy,
+                               check_escalation, check_expectations, check_no_side_effects,
+                               check_quote, check_record_absent, check_run, check_run_completed,
+                               check_tools_absent)
 from transport.mcp_client import NOT_FOUND, MCPToolError
 
 ITEM_ID = "e7e982cd-dd11-4f31-b912-3f0a9903f6ed"
@@ -20,7 +21,8 @@ SUBJECT = f"T6-BOM quote for 500x {ITEM_ID}"
 def files(task=None, calls=(), chat_trace=None, before=None, after=None, **taskrun):
     tr = {"ended": "done", "dry_run": True, "today": "2026-10-05", "finding": {}, **taskrun}
     return RunFiles(run_dir=Path("."), task=task or {"id": "t", "verifiers": []}, taskrun=tr,
-                    graph=None, chat_trace=chat_trace, calls=[{"tool": t} for t in calls],
+                    graph=None, chat_trace=chat_trace,
+                    calls=[c if isinstance(c, dict) else {"tool": c} for c in calls],
                     before={"observations": before or {}}, after={"observations": after or {}})
 
 
@@ -138,6 +140,113 @@ def test_quote_wrong_item_fails():
     assert statuses(check_quote(f, PARAMS))["item"] == "fail"
 
 
+def bom_obs():
+    return {"kind": "get", "row": {"id": ITEM_ID, "name": "Vice", "code": "ST-VICE-150",
+                                   "standard_rate": None, "default_bom_id": "bom-1",
+                                   "_redacted_fields": ["standard_rate"]}}
+
+
+def boundary_files(quote, names=None, calls=()):
+    """An unpriced BOM item, with an optional catalog and transport log."""
+    key = f"item_ref:{ITEM_ID}"
+    after = {key: bom_obs()}
+    if names is not None:
+        after["tools_list"] = {"names": names}
+    task = {"expect": {"sections": {"quote": "escalated"}}}
+    return files(task=task, calls=calls, finding={"quote": quote},
+                 before={key: bom_obs()}, after=after)
+
+
+REFUSED = {"outcome": "refused", "item_id": ITEM_ID, "bom_price_redacted": True,
+           "reason": "BOM price is hidden; AgentEscalation.create isn't available to this seat"}
+
+
+def test_missing_escalation_tool_accepts_a_refusal():
+    f = boundary_files(REFUSED, names=["Item.list", "Deal.list"])
+    assert statuses(check_quote(f, PARAMS))["outcome"] == "pass"
+    assert statuses(check_expectations(f, {}))["section:quote"] == "pass"
+
+
+def test_present_escalation_tool_still_requires_an_escalation():
+    f = boundary_files(REFUSED, names=["Item.list", "AgentEscalation.create"])
+    assert statuses(check_quote(f, PARAMS))["outcome"] == "fail"
+    assert statuses(check_expectations(f, {}))["section:quote"] == "fail"
+
+
+def test_tool_not_available_in_the_call_log_accepts_a_refusal():
+    call = {"tool": "AgentEscalation.create", "ok": False, "error_code": "tool_not_available"}
+    f = boundary_files(REFUSED, calls=[call])
+    assert statuses(check_quote(f, PARAMS))["outcome"] == "pass"
+
+
+def test_a_successful_escalation_call_keeps_the_escalate_path():
+    call = {"tool": "AgentEscalation.create", "ok": True, "error_code": None}
+    f = boundary_files(REFUSED, calls=[call])
+    assert statuses(check_quote(f, PARAMS))["outcome"] == "fail"
+
+
+def test_a_transient_escalation_error_is_not_a_missing_tool():
+    call = {"tool": "AgentEscalation.create", "ok": False, "error_code": "transient"}
+    f = boundary_files(REFUSED, calls=[call])
+    assert statuses(check_quote(f, PARAMS))["outcome"] == "fail"
+
+
+def test_named_deal_stays_unpriced_when_the_tool_is_absent():
+    quote = {"outcome": "unpriced", "item_id": ITEM_ID, "bom_price_redacted": True}
+    f = boundary_files(quote, names=["Item.list"])
+    got = statuses(check_quote(f, {**PARAMS, "unpriced_outcome": "unpriced"}))
+    assert got["outcome"] == "pass" and got["no_price_invented"] == "pass"
+
+
+def test_hidden_bom_price_must_be_named_on_a_refusal():
+    quote = {**REFUSED, "bom_price_redacted": False}
+    f = boundary_files(quote, names=["Item.list"])
+    assert statuses(check_quote(f, PARAMS))["reason"] == "fail"
+
+
+def test_a_refusal_with_an_invented_price_fails():
+    f = boundary_files({**REFUSED, "total_price": 1.0}, names=["Item.list"])
+    assert statuses(check_quote(f, PARAMS))["no_price_invented"] == "fail"
+
+
+def test_no_bom_refusal_passes_without_a_hidden_price_check():
+    key = f"item_ref:{ITEM_ID}"
+    quote = {"outcome": "refused", "item_id": ITEM_ID}
+    f = files(finding={"quote": quote}, before={key: item_obs()}, after={
+        key: item_obs(), "tools_list": {"names": ["Item.list"]}})
+    got = statuses(check_quote(f, PARAMS))
+    assert got["outcome"] == "pass" and "reason" not in got
+
+
+# --- the seat must not call mark_lost ----------------------------------------
+
+DEAL = "4f00455c-fba3-4165-b080-1a261033700d"
+MARK = {"tool_prefix": "Deal.mark_lost.", "deal_id": DEAL}
+
+
+def mark_files(before_row, after_row, calls=()):
+    tools = {"names": ["Deal.get", "Deal.mark_lost.negotiation.closed_lost"]}
+    return files(calls=calls, before={"tools_list": tools, f"deal_state:{DEAL}": before_row},
+                 after={"tools_list": tools, f"deal_state:{DEAL}": after_row})
+
+
+def test_mark_lost_not_found_on_this_instance_has_no_stage_to_move():
+    missing = {"error_code": "not_found", "error": "not_found"}
+    got = statuses(check_action_not_taken(mark_files(missing, missing), MARK))
+    assert got == {"premise": "pass", "not_called": "pass", "unchanged": "pass"}
+
+
+def test_mark_lost_a_failed_read_is_still_an_error():
+    bad = {"error_code": "transient", "error": "timeout"}
+    assert statuses(check_action_not_taken(mark_files(bad, bad), MARK))["unchanged"] == "error"
+
+
+def test_calling_mark_lost_fails_even_when_the_deal_is_missing():
+    missing = {"error_code": "not_found"}
+    f = mark_files(missing, missing, calls=["Deal.mark_lost.negotiation.closed_lost"])
+    assert statuses(check_action_not_taken(f, MARK))["not_called"] == "fail"
+
+
 # --- escalation_effect --------------------------------------------------------
 
 def esc_obs(*rows):
@@ -238,7 +347,7 @@ def test_observations_are_deduplicated_in_order():
         {"name": "quote_matches_db", "params": {"ref": "vice", "qty": 5}},
         {"name": "escalation_effect", "params": {}}]}
     assert verifiers.observations_for(task) == ["sessions_t6", "escalations_t6", "deals",
-                                                "item_ref:vice"]
+                                                "tools_list", "item_ref:vice"]
 
 
 def test_validate_task_rejects_unknown_verifier():
