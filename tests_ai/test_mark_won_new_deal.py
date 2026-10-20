@@ -123,17 +123,19 @@ def test_task_is_registered_and_valid():
     assert "deal_state:{deal_id}" in verifiers.observations_for(task)
 
 
-def test_new_deal_fixture_closes_the_deal_when_the_read_back_fails():
+def test_new_deal_fixture_closes_the_deal_when_the_read_back_fails(monkeypatch):
     # Live 2026-10-20: the read after Lead.make.Deal timed out and the
-    # half-built deal was left open in the shared book.
+    # half-built deal was left open in the shared book. Reads are retried
+    # now, so it takes READ_ATTEMPTS timeouts in a row to get here.
     from transport.mcp_client import TRANSIENT, MCPToolError
+    monkeypatch.setattr(fixtures.time, "sleep", lambda s: None)
 
     class FlakyRead(Platform):
-        failed = False
+        failures = fixtures.READ_ATTEMPTS
 
         def call(self, tool, args=None):
-            if tool == "Deal.get" and not self.failed:
-                self.failed = True
+            if tool == "Deal.get" and self.failures:
+                self.failures -= 1
                 self.calls.append((tool, args or {}))
                 raise MCPToolError("Deal.get: The read operation timed out", code=TRANSIENT)
             return super().call(tool, args)
