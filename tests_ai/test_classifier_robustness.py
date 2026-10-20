@@ -143,7 +143,8 @@ def test_run_falls_back_to_chat_when_classifier_fails(monkeypatch, tmp_path, cap
 
 def test_prompt_states_what_the_agent_cannot_do():
     p = intent.SYSTEM_PROMPT
-    assert "It cannot mark a deal won or lost, send email or messages, start follow-up" in " ".join(p.split())
+    assert ("It cannot mark a deal won or lost, disqualify a lead, send email or messages, "
+            "start follow-up") in " ".join(p.split())
     assert "an action the agent has no" in p
     assert "Never put an action from (b) here" in " ".join(p.split())
 

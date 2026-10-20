@@ -50,6 +50,11 @@ and that it is waiting for margin approval (no price was invented); for \
 deal title and that it moved from stage_before to stage_after; for "refused", \
 say the deal was not moved and why, in the words of its reason; for \
 "would_advance", say it was a dry run and nothing was written.
+- If advance_lead is present and not "not_requested": for "advanced", say the \
+lead moved from status_before to status_after, and if it was converted give \
+the new deal's title (deal_title); for "refused", say the lead was not moved \
+and why, in the words of its reason; for "would_advance", say it was a dry \
+run and nothing was written.
 - For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
 bom_price_redacted is true it's hidden from this seat, not unset), and that no price was invented.
 - If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
@@ -152,6 +157,20 @@ def render_template(finding: dict) -> str:
         out.append(f"Deal stage: I can't move it — {a.get('reason')}.")
     elif ao and ao != "not_requested":
         out += _not_answered("Deal stage", a)
+
+    ld = finding.get("advance_lead") or {}
+    lo = ld.get("outcome")
+    if lo == "advanced":
+        made = f", which created deal {ld.get('deal_title')!r}" if ld.get("deal_title") else ""
+        out.append(f"Lead moved from {ld.get('status_before')} to {ld.get('status_after')}"
+                   f"{made} (read back as {ld.get('status_after')}).")
+    elif lo == "would_advance":
+        out.append(f"Lead: dry run — it would move from {ld.get('status_before')} to "
+                   f"{ld.get('next_status')}; nothing was written.")
+    elif lo == "refused":
+        out.append(f"Lead: I can't move it — {ld.get('reason')}.")
+    elif lo and lo != "not_requested":
+        out += _not_answered("Lead", ld)
 
     for ref in finding.get("refusals") or []:
         out.append(f"Refused: {ref.get('request')} — {ref.get('reason')}")

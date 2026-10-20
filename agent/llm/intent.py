@@ -15,6 +15,14 @@ from transport.llm_client import LLMError, call_llm, parse_json_object, with_sch
 
 ASKS = ("closing_this_month", "at_risk", "quote")
 OPEN_STAGES = ("new", "qualification", "proposal", "negotiation")
+LEAD_STATUSES = ("new", "contacted", "qualified", "converted")
+# What a model writes for a lead step, live 2026-10-21: "convert it into a
+# deal" came back as target_status "deal". Mapped, never guessed further.
+LEAD_STATUS_SYNONYMS = {
+    "deal": "converted", "a_deal": "converted", "convert": "converted", "conversion": "converted",
+    "converted_to_deal": "converted", "converted_into_deal": "converted",
+    "contact": "contacted", "qualify": "qualified",
+}
 
 # The JSON is under 200 tokens, but a reasoning model can spend most of a
 # small budget before writing it: the hosted run's model (deepseek-v4p1-flash)
@@ -60,12 +68,21 @@ SCHEMA = {
             "required": ["deal_ref", "target_stage"],
             "description": "A request to move one open deal forward a stage: the deal exactly as written (id or title) and the stage asked for, if any. Both empty if not asked.",
         },
+        "advance_lead": {
+            "type": "object",
+            "properties": {
+                "lead_ref": {"type": "string"},
+                "target_status": {"type": "string"},
+            },
+            "required": ["lead_ref", "target_status"],
+            "description": "A request to move one open lead forward a step (contacted, qualified, or converted into a deal): the lead exactly as written and the status asked for, if any. Both empty if not asked.",
+        },
         "other": {
             "type": "string",
             "description": "An in-scope request the agent can do that isn't one of the asks: looking up one deal or lead. Empty if none.",
         },
     },
-    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "other"],
+    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "advance_lead", "other"],
 }
 
 SYSTEM_PROMPT = """You classify requests sent to the Pipeline/Sales agent of \
@@ -73,11 +90,13 @@ Suryodaya Precision Works. Do not answer the request; only classify it.
 
 The agent can do only these things: answer its three standard questions, \
 look up one deal or lead, move one open deal forward a stage in the funnel \
-(new -> qualification -> proposal -> negotiation), and escalate to a human \
-colleague what it can't do itself (e.g. a quote it can't price). \
-It cannot mark a deal won or lost, send email or messages, start follow-up \
-sequences, raise or send invoices, or otherwise create, change, merge or \
-delete records.
+(new -> qualification -> proposal -> negotiation), move one open lead \
+forward a step (new -> contacted -> qualified -> converted into a deal), and \
+escalate to a human colleague what it can't do itself (e.g. a quote it \
+can't price). \
+It cannot mark a deal won or lost, disqualify a lead, send email or \
+messages, start follow-up sequences, raise or send invoices, or otherwise \
+create, change, merge or delete records.
 
 The agent's three standard questions (asks):
 - closing_this_month: which deals are expected to close this month.
@@ -95,12 +114,20 @@ default; 0 if not stated.
 HR, accounting, or a discount beyond policy; (b) an action the agent has no \
 tool for, even if it is sales work, e.g. emailing a quotation, starting a \
 follow-up sequence, raising an invoice, marking a deal won or lost, \
-converting a lead, or merging records (reason: no tool for it).
+disqualifying a lead, or merging records (reason: no tool for it).
 - advance_deal: a request to move a deal forward ("move deal X to proposal", \
 "progress deal X", "qualify deal X"). deal_ref is the deal exactly as \
 written (id or title); target_stage is the stage named (qualification, \
 proposal or negotiation), or empty if none was named. Never put winning or \
 losing a deal here: that goes in out_of_scope. Both empty if not asked.
+- advance_lead: a request to move a lead forward ("mark lead X as \
+contacted", "qualify lead X", "convert lead X into a deal"). lead_ref is the \
+lead exactly as written; target_status is the status the user wants the \
+lead moved TO (contacted, qualified or converted; converting into a deal is \
+"converted"), never the status it is in now: "Lead X is qualified. Convert \
+it into a deal." is target_status "converted". Empty if none was named. Put every such request \
+here, even one that skips a step: the agent checks the step itself. Never \
+put disqualifying a lead here. Both empty if not asked.
 - other: an in-scope request the agent can do that isn't one of the three \
 questions, e.g. "look up deal <id>" or "what's the status of lead X". Never \
 put an action from (b) here. Empty if none."""
@@ -133,8 +160,9 @@ _NO_TOOL = (
 _LOOKUP = re.compile(r"\b(?:look(?:\s+|-)?up|lookup|status of|find)\b", re.I)
 
 
-def _route(asks: list, out_of_scope: list, other: str | None, advance: dict | None = None) -> str:
-    if asks or advance or (out_of_scope and not other):
+def _route(asks: list, out_of_scope: list, other: str | None, advance: dict | None = None,
+           advance_lead: dict | None = None) -> str:
+    if asks or advance or advance_lead or (out_of_scope and not other):
         return "graph"
     return "chat"   # anything else in scope — or unclassifiable — goes to the tool loop
 
@@ -154,9 +182,12 @@ def validate(raw: dict) -> dict:
     other = (raw.get("other") or "").strip() or None
     advance, refused = _advance(raw.get("advance_deal"))
     out_of_scope += refused
+    advance_lead, refused = _advance_lead(raw.get("advance_lead"))
+    out_of_scope += refused
 
-    return {"route": _route(asks, out_of_scope, other, advance), "asks": asks, "item_ref": item_ref,
-            "qty": qty, "out_of_scope": out_of_scope, "advance": advance, "other": other}
+    return {"route": _route(asks, out_of_scope, other, advance, advance_lead), "asks": asks,
+            "item_ref": item_ref, "qty": qty, "out_of_scope": out_of_scope, "advance": advance,
+            "advance_lead": advance_lead, "other": other}
 
 
 def _advance(raw) -> tuple[dict | None, list[dict]]:
@@ -174,6 +205,42 @@ def _advance(raw) -> tuple[dict | None, list[dict]]:
                        "reason": "only open stages (qualification, proposal, negotiation); "
                                  "marking a deal won or lost is a person's decision"}]
     return {"deal_ref": ref or None, "target_stage": target}, []
+
+
+def _advance_lead(raw) -> tuple[dict | None, list[dict]]:
+    """The lead move, or None; plus a refusal when the status asked for isn't
+    one of the funnel's (disqualified, anything else). Skips and backward
+    moves pass through: domain/lead_stage.py refuses them with the reason."""
+    if not isinstance(raw, dict):
+        return None, []
+    ref = str(raw.get("lead_ref") or "").strip()
+    target = str(raw.get("target_status") or "").strip().lower().replace(" ", "_") or None
+    target = LEAD_STATUS_SYNONYMS.get(target, target)
+    if not ref and not target:
+        return None, []
+    if target and target not in LEAD_STATUSES:
+        reason = ("this agent can't disqualify a lead" if target.startswith("disqualif")
+                  else f"{target!r} isn't a lead step (contacted, qualified, converted)")
+        return None, [{"request": f"move lead {ref or '(unnamed)'} to {target}", "reason": reason}]
+    return {"lead_ref": ref or None, "target_status": target}, []
+
+
+# "Convert ... into a deal" names one step only. Live 2026-10-21 the model
+# took "Lead X is qualified. Convert it into a deal." as target "qualified"
+# (the current status), so the lead wasn't converted. A move *to* converted
+# is still checked step by step in domain/lead_stage.py.
+_CONVERT_TO_DEAL = re.compile(r"\bconvert\w*\b.{0,60}?\b(?:in)?to\s+(?:a\s+|the\s+)?deal\b", re.I)
+
+
+def pin_convert_target(intent: dict, text: str) -> dict:
+    """Copy of `intent` whose lead move targets `converted` when the request
+    says to convert the lead into a deal, whatever status the model gave."""
+    lead = intent.get("advance_lead")
+    if not lead or lead.get("target_status") == "converted" or not _CONVERT_TO_DEAL.search(text or ""):
+        return intent
+    return {**intent, "advance_lead": {**lead, "target_status": "converted"},
+            "target_pinned": f"target_status {lead.get('target_status')!r} -> 'converted' "
+                             "(the request says to convert the lead into a deal)"}
 
 
 def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict:
@@ -196,7 +263,8 @@ def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict
     out_of_scope = list(intent.get("out_of_scope") or []) + found
     updated = {**intent, "out_of_scope": out_of_scope, "other": other}
     if not keep_route:
-        updated["route"] = _route(updated.get("asks") or [], out_of_scope, other, updated.get("advance"))
+        updated["route"] = _route(updated.get("asks") or [], out_of_scope, other, updated.get("advance"),
+                                  updated.get("advance_lead"))
     return updated
 
 
@@ -204,7 +272,8 @@ def classifier_fallback(error: str) -> dict:
     """The intent to run with when classification failed: the chat loop, with
     nothing pre-decided. `classifier_error` keeps the reason on the record."""
     return {"route": "chat", "asks": [], "item_ref": None, "qty": None,
-            "out_of_scope": [], "advance": None, "other": None, "classifier_error": error}
+            "out_of_scope": [], "advance": None, "advance_lead": None, "other": None,
+            "classifier_error": error}
 
 
 def _reply_json(resp: dict):
@@ -239,7 +308,7 @@ def parse_request(query: str) -> dict:
             raise IntentError(f"could not classify the request: {e}") from e
         raw = _reply_json(resp)
         if raw is not None:
-            return record_no_tool(validate(raw), query)
+            return pin_convert_target(record_no_tool(validate(raw), query), query)
         text = resp.get("text") or ""
         failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
                         f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")

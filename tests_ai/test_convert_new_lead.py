@@ -62,7 +62,9 @@ def test_retire_disqualifies_the_lead_and_touches_no_deal():
     out = fixtures.retire(p, {"kind": "new_lead", "lead_id": "l1"})
     assert out["tool"] == "Lead.disqualify.new.disqualified"
     assert out["status_after"] == "disqualified"
-    assert not any(t.startswith(("Deal.", "Quotation.")) for t in tools(p))
+    # It reads the lead's deals (to close any a conversion made) but writes none here.
+    assert not any(t.startswith(("Deal.", "Quotation.")) and not t.endswith((".get", ".list"))
+                   for t in tools(p))
 
 
 def test_retire_leaves_a_closed_lead_alone():

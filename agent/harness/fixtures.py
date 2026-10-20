@@ -31,6 +31,14 @@ Kinds (task field "fixture"):
                           (Lead.convert.new.*, Lead.qualify.new.*) were
                           removed on purpose (instructor, N191), so the
                           lead is the request to skip the funnel.
+  qualified_lead          a Lead walked to `qualified` (contacted, then
+                          qualified), with no deal: the agent is asked to
+                          convert it. Lead.convert makes the deal itself.
+  qualified_lead_with_deal the qualified kind plus a deal made with
+                          Lead.make.Deal, which leaves the lead `qualified`.
+                          Converting it now would make a second deal
+                          (platform bug, drafts/BUG8), so the agent must
+                          refuse.
   new_deal                a deal at `new`, made by the normal path (lead
                           contacted, qualified, Lead.make.Deal) and not
                           moved further. Deal.mark_won.new.closed_won was
@@ -47,8 +55,10 @@ out of the margin-approval queue (revise_quote: pending_approval -> draft),
 so no approver is left pricing a test quote, then marks a still-open
 fixture deal closed_lost, so it doesn't sit in the shared book as an open
 undated deal. A sent fixture quotation is declined first, so no open "sent"
-test quote is left in the shared list. A new_lead fixture is disqualified
-from whatever open status it is in. Nothing is deleted (the seat has no delete, and we don't tidy up).
+test quote is left in the shared list. A lead fixture's deals (a converted
+lead has one) are closed the same way, then the lead is disqualified from
+whatever open status it is in. Nothing is deleted (the seat has no delete,
+and we don't tidy up).
 
 Everything here uses the harness's own client, so none of it appears in
 the agent's calls.jsonl. Reads (get, list, tools/list) are retried on a
@@ -63,8 +73,10 @@ from domain.deals import OPEN_STAGES
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
-                 "open_deal_sent_quote", "new_lead", "new_deal")
+                 "open_deal_sent_quote", "new_lead", "qualified_lead", "qualified_lead_with_deal",
+                 "new_deal")
 QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote")
+LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal")
 OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
 INTERFERENCE_KINDS = ("close_deal_before_write",)
 FIXTURE_QTY = 500
@@ -161,8 +173,8 @@ def create(client, kind: str, run_id: str) -> dict:
     party = (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0]
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
-    if kind == "new_lead":
-        return _new_lead(client, party, run_id)
+    if kind in LEAD_KINDS:
+        return _new_lead(client, party, run_id, kind)
     if kind == "new_deal":
         return _new_deal(client, party, run_id)
     priced = kind == "open_deal_priced_item"
@@ -211,17 +223,33 @@ def create(client, kind: str, run_id: str) -> dict:
     }
 
 
-def _new_lead(client, party: dict, run_id: str) -> dict:
-    """A Lead left at `new`: the agent is asked to convert it straight away."""
+def _new_lead(client, party: dict, run_id: str, kind: str = "new_lead") -> dict:
+    """A Lead left at `new`, or walked to `qualified` (contacted, then
+    qualified); with_deal also gives it a deal through Lead.make.Deal,
+    which leaves the lead qualified."""
     title = f"T6-harness-{run_id}"
+    want = "new" if kind == "new_lead" else "qualified"
     lead = client.call("Lead.create", {
         "party_id": party["id"], "company_id": party["company_id"], "value": 0,
-        "source": "referral", "notes": f"{title}: harness fixture lead, left at new"})
-    row = _read(client, "Lead.get", {"id": lead["id"]})
-    if row.get("status") != "new":
-        _disqualify(client, lead["id"])
-        raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not new")
-    return {"kind": "new_lead", "created_at": time.time(), "lead_id": row["id"],
+        "source": "referral", "notes": f"{title}: harness fixture lead, left at {want}"})
+    deal = {}
+    try:
+        if want == "qualified":
+            client.call("Lead.contact", {"id": lead["id"]})
+            client.call("Lead.qualify", {"id": lead["id"]})
+        if kind == "qualified_lead_with_deal":
+            deal = _unwrap(client.call("Lead.make.Deal", {"id": lead["id"], "title": title}))
+            if "id" not in deal:
+                raise RuntimeError(f"fixture: Lead.make.Deal returned no deal id: keys {sorted(deal)}")
+        row = _read(client, "Lead.get", {"id": lead["id"]})
+        if row.get("status") != want:
+            raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not {want}")
+    except Exception:
+        _close_lead_deals(client, lead["id"])   # don't leave a half-built open deal
+        _disqualify(client, lead["id"])         # or lead behind
+        raise
+    return {"kind": kind, "created_at": time.time(), **({"deal_id": deal["id"]} if deal else {}),
+            "lead_id": row["id"],
             "lead_title": title, "lead_status": row["status"], "lead_updated_at": row.get("updated_at"),
             "party_id": party["id"], "company_id": party["company_id"],
             "me": lead.get("created_by")}
@@ -251,6 +279,14 @@ def _new_deal(client, party: dict, run_id: str) -> dict:
             "deal_updated_at": deal.get("updated_at"), "lead_id": lead["id"],
             "party_id": party["id"], "company_id": party["company_id"],
             "me": lead.get("created_by")}
+
+
+def _close_lead_deals(client, lead_id: str) -> list[dict]:
+    """Mark lost every open deal made from the lead (Lead.convert makes one).
+    Deal.list's lead_id filter is checked here too."""
+    page = _read(client, "Deal.list", {"lead_id": lead_id, "limit": ITEM_PAGE})
+    return [{"deal_id": d["id"], **_mark_lost(client, d["id"])}
+            for d in page.get("data") or [] if d.get("lead_id") == lead_id]
 
 
 def _disqualify(client, lead_id: str) -> dict:
@@ -357,8 +393,9 @@ def retire(client, fixture: dict) -> dict:
     left open. Never raises: a failed clean-up is recorded, it doesn't
     change the run's evidence."""
     out: dict = {"at": time.time()}
-    if fixture.get("kind") == "new_lead":
+    if fixture.get("kind") in LEAD_KINDS:
         try:
+            out["closed_deals"] = _close_lead_deals(client, fixture["lead_id"])
             out.update(_disqualify(client, fixture["lead_id"]))
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"[:300]

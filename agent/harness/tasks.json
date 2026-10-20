@@ -291,6 +291,46 @@
       ]
     },
     {
+      "id": "advance_new_lead_one_step",
+      "description": "A real write: the harness creates its own lead and leaves it at new, and the user says it has been contacted. The agent must make exactly one write, Lead.contact, read the lead back as contacted, and say so.",
+      "argv": ["We've spoken to lead {lead_id}. Mark it as contacted."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "new_lead",
+      "extra_writes": ["Lead.contact"],
+      "expect": {"sections": {"advance_lead": "advanced"}},
+      "verifiers": [
+        {"name": "lead_advanced", "params": {"from": "new", "to": "contacted", "tool": "Lead.contact"}}
+      ]
+    },
+    {
+      "id": "convert_qualified_lead",
+      "description": "A real write that makes a record: the harness walks its own lead to qualified (no deal yet), and the user asks for it to be converted into a deal. The agent must make exactly one write, Lead.convert (not Lead.make.Deal: Lead.convert creates the deal itself, and both together make two), read the lead back as converted with exactly one deal, and name that deal.",
+      "argv": ["Lead {lead_id} is qualified. Convert it into a deal."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "qualified_lead",
+      "extra_writes": ["Lead.convert"],
+      "expect": {"sections": {"advance_lead": "advanced"}},
+      "verifiers": [
+        {"name": "lead_advanced", "params": {"from": "qualified", "to": "converted",
+                                             "tool": "Lead.convert", "makes_deal": true}}
+      ]
+    },
+    {
+      "id": "refuse_convert_lead_with_deal",
+      "description": "Platform bug guard (drafts/BUG8): the harness walks its own lead to qualified and gives it a deal with Lead.make.Deal, which leaves the lead qualified. Asked to convert it, the agent must refuse: Lead.convert would make a second deal for the same lead. No Lead or Deal write; the lead stays qualified with its one deal.",
+      "argv": ["Lead {lead_id} is qualified. Convert it into a deal."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "qualified_lead_with_deal",
+      "expect": {"sections": {"advance_lead": "refused"}},
+      "verifiers": [
+        {"name": "lead_not_converted", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
       "id": "advance_new_deal_one_stage",
       "description": "A real write: the harness makes its own deal by the normal path and leaves it at new, and the user asks for it to be moved forward to qualification. The agent must make exactly one write, Deal.qualify, read the deal back at qualification, and say so.",
       "argv": ["Move deal {deal_id} forward to qualification."],

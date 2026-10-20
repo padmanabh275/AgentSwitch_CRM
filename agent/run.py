@@ -31,6 +31,9 @@ Under --dry-run nothing is written.
 --to-stage if given (it must be the next stage). Never to won or lost.
 Without --asks, an --advance run asks nothing else.
 
+--advance-lead: move that lead (id) one step forward, to --to-status if
+given (it must be the next step). Converting creates the lead's deal.
+
 --today: pin the date "this month" and "overdue" are judged against, for
 reproducible runs (the deal data itself is still live).
 
@@ -73,7 +76,7 @@ RUN_ID_RE = re.compile(r"[\w.-]+")
 
 
 def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = None,
-                advance: dict | None = None) -> str:
+                advance: dict | None = None, advance_lead: dict | None = None) -> str:
     parts = []
     if "closing_this_month" in asks:
         parts.append("what closes this month")
@@ -85,6 +88,9 @@ def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = 
     if advance:
         parts.append(f"move deal {advance['deal_ref']} forward one stage"
                      + (f" to {advance['target_stage']}" if advance.get("target_stage") else ""))
+    if advance_lead:
+        parts.append(f"move lead {advance_lead['lead_ref']} forward one step"
+                     + (f" to {advance_lead['target_status']}" if advance_lead.get("target_status") else ""))
     query = ", and ".join(parts) + "?"
     return query[0].upper() + query[1:]  # not .capitalize(): it lowercases "BOM"
 
@@ -146,6 +152,10 @@ def main() -> int:
                     help="move this deal (id or exact title) one stage forward")
     ap.add_argument("--to-stage", default=None, choices=plans.ADVANCE_STAGES,
                     help="the stage --advance should reach; must be the deal's next one")
+    ap.add_argument("--advance-lead", default=None, metavar="LEAD_ID",
+                    help="move this lead one step forward (converting creates its deal)")
+    ap.add_argument("--to-status", default=None, choices=plans.ADVANCE_STATUSES,
+                    help="the status --advance-lead should reach; must be the lead's next one")
     ap.add_argument("--chat", default=None, metavar="QUESTION",
                     help="free-form question via the LLM tool loop instead of the graph")
     ap.add_argument("--today", type=dt.date.fromisoformat, default=None, metavar="YYYY-MM-DD",
@@ -164,11 +174,15 @@ def main() -> int:
 
     if args.to_stage and not args.advance:
         ap.error("--to-stage needs --advance")
+    if args.to_status and not args.advance_lead:
+        ap.error("--to-status needs --advance-lead")
     if args.asks is None:
-        asks = [] if args.advance else list(plans.ASKS)
+        asks = [] if (args.advance or args.advance_lead) else list(plans.ASKS)
     else:
         asks = [a.strip() for a in args.asks.split(",") if a.strip()]
     advance = {"deal_ref": args.advance, "target_stage": args.to_stage} if args.advance else None
+    advance_lead = ({"lead_ref": args.advance_lead, "target_status": args.to_status}
+                    if args.advance_lead else None)
     unknown = sorted(set(asks) - set(plans.ASKS))
     if unknown:   # before login, so a typo never leaves a session behind
         ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
@@ -179,7 +193,8 @@ def main() -> int:
 
     run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
                              + "-" + uuid.uuid4().hex[:6])
-    query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal, advance)
+    query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal, advance,
+                                                                 advance_lead)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
                   prompt=query, dry_run=args.dry_run,
                   today=args.today.isoformat() if args.today else None,
@@ -189,7 +204,7 @@ def main() -> int:
     t0 = time.time()
 
     plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty, "deal_id": args.deal,
-                 "advance": advance}
+                 "advance": advance, "advance_lead": advance_lead}
     if args.question:
         # Classify before anything is written, so the route is known before a
         # session is opened.
@@ -210,7 +225,8 @@ def main() -> int:
         run.intent = intent
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {**{k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")},
-                     "deal_id": args.deal, "advance": intent.get("advance")}
+                     "deal_id": args.deal, "advance": intent.get("advance"),
+                     "advance_lead": intent.get("advance_lead")}
 
     try:
         client = LoggedClient(client_from_env(env), run_dir / "calls.jsonl")

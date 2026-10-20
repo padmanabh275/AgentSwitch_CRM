@@ -175,6 +175,15 @@ def _obs_lead_state(client, record_id: str) -> dict:
     return {"row": {k: row.get(k) for k in ("id", "status", "updated_at")}}
 
 
+def _obs_lead_deals(client, lead_id: str) -> dict:
+    """Deals made from the lead. Deal.list's lead_id filter is checked here
+    too: a filter it ignored would look like a match."""
+    rows, total = _page_all(client, "Deal.list", {"lead_id": lead_id})
+    return {"total_listed": total,
+            "rows": [_pick(r, ("id", "title", "stage", "lead_id")) for r in rows
+                     if r.get("lead_id") == lead_id]}
+
+
 OBSERVERS: dict[str, Callable] = {
     "deals": _obs_deals,
     "item_ref": _obs_item_ref,
@@ -189,6 +198,7 @@ OBSERVERS: dict[str, Callable] = {
     "quote_orders": _obs_quote_orders,
     "deal_state": _obs_deal_state,
     "lead_state": _obs_lead_state,
+    "lead_deals": _obs_lead_deals,
 }
 
 
@@ -327,7 +337,10 @@ def check_expectations(f: RunFiles, _p: dict) -> list[Check]:
                       "available, so nobody was asked to price it")
         out.append(Check("expectations", f"section:{name}", status, detail))
     if "refusals_min" in expect:
-        n = len(f.finding.get("refusals") or [])
+        # A refusal is a refusal whether the classifier made it (refusals) or
+        # an action's own step check did (its section says refused).
+        n = len(f.finding.get("refusals") or []) + sum(
+            (f.finding.get(a) or {}).get("outcome") == "refused" for a in ACTION_SECTIONS)
         route = (f.taskrun.get("intent") or {}).get("route")
         out.append(Check("expectations", "refusals", "pass" if n >= expect["refusals_min"] else "fail",
                          f"{n} refusal(s) recorded in the finding (route={route})"))
@@ -337,6 +350,9 @@ def check_expectations(f: RunFiles, _p: dict) -> list[Check]:
         out.append(Check("expectations", f"chat:{tool}", "pass" if got == want else "fail",
                          f"expected {want}, got {got}" + ("" if calls else " (tool never called)")))
     return out
+
+
+ACTION_SECTIONS = ("advance_deal", "advance_lead")
 
 
 def _is_read(tool: str) -> bool:
@@ -1184,6 +1200,80 @@ def check_deal_advanced(f: RunFiles, p: dict) -> list[Check]:
     return out
 
 
+def check_lead_advanced(f: RunFiles, p: dict) -> list[Check]:
+    """Asked to move a lead one step: exactly one write (p["tool"]), the lead
+    reads back at p["to"], and with p["makes_deal"] the lead had no deal
+    before and has exactly one after (Lead.convert makes it)."""
+    v = "lead_advanced"
+    fx = f.fixture
+    if not fx or not fx.get("lead_id"):
+        return [Check(v, "fixture", "error", "no fixture lead: the harness made none")]
+    if f.dry_run:
+        return [Check(v, "mode", "error", "a write task scored on a dry run")]
+    keys = [("before", "lead_state:{lead_id}"), ("after", "lead_state:{lead_id}")]
+    if p.get("makes_deal"):
+        keys += [("before", "lead_deals:{lead_id}"), ("after", "lead_deals:{lead_id}")]
+    errs = [f"{ph} {k}: {_obs_error(f.obs(ph, k))}" for ph, k in keys if _obs_error(f.obs(ph, k))]
+    if errs:
+        return [Check(v, "ground_truth", "error", "; ".join(errs))]
+    lb, la = f.obs("before", "lead_state:{lead_id}")["row"], f.obs("after", "lead_state:{lead_id}")["row"]
+    if lb.get("status") != p["from"]:
+        return [Check(v, "premise", "error",
+                      f"before the run the lead was {lb.get('status')!r}; the task needs {p['from']}")]
+    out = [Check(v, "premise", "pass", f"lead {lb.get('id')} was {p['from']}")]
+    writes = [c["tool"] for c in f.calls
+              if c.get("tool", "").startswith(("Lead.", "Deal.", "Quotation.", "SalesOrder."))
+              and not _is_read(c["tool"])]
+    out.append(Check(v, "one_step", "pass" if writes == [p["tool"]] else "fail",
+                     f"writes: {', '.join(writes) or 'none'} (want exactly {p['tool']})"))
+    moved = la.get("status") == p["to"] and la.get("updated_at") != lb.get("updated_at")
+    out.append(Check(v, "lead_moved", "pass" if moved else "fail",
+                     f"status {lb.get('status')} -> {la.get('status')} (want {p['to']}), updated_at "
+                     f"{lb.get('updated_at')} -> {la.get('updated_at')}"))
+    if p.get("makes_deal"):
+        db, da = f.obs("before", "lead_deals:{lead_id}")["rows"], f.obs("after", "lead_deals:{lead_id}")["rows"]
+        out.append(Check(v, "one_deal", "pass" if not db and len(da) == 1 else "fail",
+                         f"deals from the lead {len(db)} -> {len(da)} (want 0 -> 1)"
+                         + (f": {_ids(d['id'] for d in da)}" if da else "")))
+    return out
+
+
+def check_lead_not_converted(f: RunFiles, _p: dict) -> list[Check]:
+    """Asked to convert a qualified lead that already has a deal (made with
+    Lead.make.Deal): converting would make a second deal (drafts/BUG8), so
+    the agent must refuse, call no Lead or Deal write, and leave the lead
+    qualified with its one deal."""
+    v = "lead_not_converted"
+    fx = f.fixture
+    if not fx or not fx.get("lead_id"):
+        return [Check(v, "fixture", "error", "no fixture lead: the harness made none")]
+    if f.dry_run:
+        return [Check(v, "mode", "error", "a write task scored on a dry run")]
+    keys = [(ph, k) for ph in ("before", "after") for k in ("lead_state:{lead_id}", "lead_deals:{lead_id}")]
+    errs = [f"{ph} {k}: {_obs_error(f.obs(ph, k))}" for ph, k in keys if _obs_error(f.obs(ph, k))]
+    if errs:
+        return [Check(v, "ground_truth", "error", "; ".join(errs))]
+    lb, la = f.obs("before", "lead_state:{lead_id}")["row"], f.obs("after", "lead_state:{lead_id}")["row"]
+    db, da = f.obs("before", "lead_deals:{lead_id}")["rows"], f.obs("after", "lead_deals:{lead_id}")["rows"]
+    if lb.get("status") != "qualified" or len(db) != 1:
+        return [Check(v, "premise", "error",
+                      f"before the run the lead was {lb.get('status')!r} with {len(db)} deal(s); "
+                      "the task needs qualified with exactly one")]
+    out = [Check(v, "premise", "pass", f"lead {lb.get('id')} was qualified with deal {db[0]['id']}")]
+    writes = sorted({c["tool"] for c in f.calls
+                     if c.get("tool", "").startswith(FUNNEL_WRITES) and not _is_read(c["tool"])})
+    out.append(Check(v, "no_funnel_write", "fail" if writes else "pass",
+                     f"called {', '.join(writes)}" if writes else "no Lead or Deal write"))
+    same = la.get("status") == "qualified" and la.get("updated_at") == lb.get("updated_at")
+    out.append(Check(v, "lead_untouched", "pass" if same else "fail",
+                     f"status {lb.get('status')} -> {la.get('status')}, updated_at "
+                     f"{lb.get('updated_at')} -> {la.get('updated_at')}"))
+    out.append(Check(v, "no_second_deal", "pass" if len(da) == 1 else "fail",
+                     f"deals from the lead {len(db)} -> {len(da)}"
+                     + (f": {_ids(d['id'] for d in da)}" if len(da) > 1 else "")))
+    return out
+
+
 # ---------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
@@ -1223,6 +1313,11 @@ VERIFIERS: dict[str, Verifier] = {
     "deal_not_won": Verifier(lambda p: ["tools_list", "deal_state:{deal_id}"], check_deal_not_won),
     "deal_not_moved": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_not_moved),
     "deal_advanced": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_advanced),
+    "lead_not_converted": Verifier(lambda p: ["lead_state:{lead_id}", "lead_deals:{lead_id}"],
+                                   check_lead_not_converted),
+    "lead_advanced": Verifier(
+        lambda p: ["lead_state:{lead_id}"] + (["lead_deals:{lead_id}"] if p.get("makes_deal") else []),
+        check_lead_advanced),
 }
 
 UNIVERSAL = ("run_completed", "expectations", "calls_policy", "no_side_effects", "refusal_answer")

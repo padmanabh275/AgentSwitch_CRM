@@ -132,6 +132,19 @@ def verify_claims(text: str, finding: dict) -> dict:
     elif advance.get("outcome") == "would_advance" and not re.search(r"dry[- ]run", text, re.I):
         missing.append("dry run: the deal was not moved")
 
+    lead = finding.get("advance_lead") or {}
+    if lead.get("outcome") == "advanced" and not (
+            re.search(re.escape(str(lead.get("status_after"))), text, re.I)
+            and (not lead.get("deal_title") or lead["deal_title"] in text)):
+        missing.append(f"the lead moved to {lead.get('status_after')}"
+                       + (f" and created deal {lead['deal_title']!r}" if lead.get("deal_title") else ""))
+    elif lead.get("outcome") == "refused" and not re.search(
+            r"not (?:been )?(?:moved|advanced|changed|converted)|can(?:no|')t|unable|refus|won't|will not",
+            text, re.I):
+        missing.append("the lead was not moved, and why")
+    elif lead.get("outcome") == "would_advance" and not re.search(r"dry[- ]run", text, re.I):
+        missing.append("dry run: the lead was not moved")
+
     refusals = [r.get("request") for r in finding.get("refusals") or []]
     if refusals and not REFUSAL_RE.search(text):
         missing.append("that you can't do this, in so many words: " + "; ".join(map(str, refusals)))
