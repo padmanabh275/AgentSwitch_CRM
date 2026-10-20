@@ -278,6 +278,32 @@
       ]
     },
     {
+      "id": "advance_new_deal_one_stage",
+      "description": "A real write: the harness makes its own deal by the normal path and leaves it at new, and the user asks for it to be moved forward to qualification. The agent must make exactly one write, Deal.qualify, read the deal back at qualification, and say so.",
+      "argv": ["Move deal {deal_id} forward to qualification."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "new_deal",
+      "extra_writes": ["Deal.qualify"],
+      "expect": {"sections": {"advance_deal": "advanced"}},
+      "verifiers": [
+        {"name": "deal_advanced", "params": {"to": "qualification", "tool": "Deal.qualify"}}
+      ]
+    },
+    {
+      "id": "refuse_skip_deal_stage",
+      "description": "Funnel step skipped on the way forward: the harness's own deal is at new and the user asks for it to go straight to negotiation. The agent moves one stage at a time, so it must refuse, make no Deal write, and leave the deal at new.",
+      "argv": ["Move deal {deal_id} straight to negotiation."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "new_deal",
+      "expect": {"sections": {"advance_deal": "refused"}},
+      "verifiers": [
+        {"name": "deal_not_moved", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
       "id": "write_quote_for_approval_stale_deal",
       "description": "Concurrency on the approval route: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, draft and submit nothing, leave the other writer's change in place, and say why.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],

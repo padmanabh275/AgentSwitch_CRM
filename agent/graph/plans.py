@@ -9,11 +9,13 @@ built; the planner (graph/planner.py) extends the graph from there.
     resolve_item ── price_lookup ──(+ escalate_quote)───────┤
     get_deal ──────────────(+ create_quotation ── send_quotation)┤  (with a deal, priced)
              └─────────(+ draft_for_approval ── submit_for_approval)┤  (with a deal, unpriced)
+    advance_deal (move a deal one stage) ───────────────────┤
     refuse_1..n (out-of-scope parts) ───────────────────────┤
                                             build_finding (needs=done) ── narrate
 """
 from __future__ import annotations
 
+from domain.deal_stage import ADVANCE_STAGES  # noqa: F401  (run.py's --to-stage choices)
 from graph.engine import TaskSpec
 
 ASKS = ("closing_this_month", "at_risk", "quote")
@@ -33,6 +35,7 @@ SECTION_SOURCES = {
     # deal, or a closed one); otherwise the write nodes do.
     "quotation": ["submit_for_approval", "draft_for_approval",
                   "send_quotation", "create_quotation", "get_deal"],
+    "advance_deal": ["advance_deal"],
 }
 
 NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own "
@@ -41,11 +44,14 @@ NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own
 
 def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | None = None,
                     out_of_scope: list[dict] | None = None,
-                    other: str | None = None, deal_id: str | None = None) -> list[TaskSpec]:
+                    other: str | None = None, deal_id: str | None = None,
+                    advance: dict | None = None) -> list[TaskSpec]:
     """item_ref may be an id, code or name. qty None means "not stated":
     the quote is refused rather than assuming a quantity. deal_id makes the
     quote a Quotation on that deal (the planner adds the writes once the
-    price is known); without it the quote is only a number in the finding."""
+    price is known); without it the quote is only a number in the finding.
+    advance ({"deal_ref", "target_stage"}) moves that deal one stage forward;
+    whether the step is allowed is decided in domain/deal_stage.py."""
     unknown = set(asks) - set(ASKS)
     if unknown:
         raise ValueError(f"unknown asks {sorted(unknown)}; expected a subset of {ASKS}")
@@ -78,6 +84,11 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
                 tasks.append(TaskSpec("get_deal", "get_deal", args={"deal_id": deal_id}))
                 leaves.append("get_deal")
 
+    if advance:
+        tasks.append(TaskSpec("advance_deal", "advance_deal", args={
+            "deal_ref": advance.get("deal_ref"), "target_stage": advance.get("target_stage")}))
+        leaves.append("advance_deal")
+
     refusals = []
     for i, part in enumerate(out_of_scope or [], start=1):
         node_id = f"refuse_{i}"
@@ -90,7 +101,8 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
     tasks.append(TaskSpec("build_finding", "build_finding", needs="done", deps=leaves,
                           args={"asks": list(asks), "sections": SECTION_SOURCES,
                                 "refusals": refusals, "not_handled": not_handled,
-                                "quotation_requested": bool(deal_id and "quote" in asks)}))
+                                "quotation_requested": bool(deal_id and "quote" in asks),
+                                "advance_requested": bool(advance)}))
     tasks.append(TaskSpec("narrate", "narrate", args={"finding": "build_finding"},
                           deps=["build_finding"]))
     return tasks

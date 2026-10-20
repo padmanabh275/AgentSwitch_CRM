@@ -46,6 +46,10 @@ for "pending_approval", give the quotation number and the deal title, say it \
 was drafted with no rate because the BOM price isn't visible to this seat, \
 and that it is waiting for margin approval (no price was invented); for \
 "would_submit", say it was a dry run and nothing was written.
+- If advance_deal is present and not "not_requested": for "advanced", give the \
+deal title and that it moved from stage_before to stage_after; for "refused", \
+say the deal was not moved and why, in the words of its reason; for \
+"would_advance", say it was a dry run and nothing was written.
 - For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
 bom_price_redacted is true it's hidden from this seat, not unset), and that no price was invented.
 - If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
@@ -135,6 +139,19 @@ def render_template(finding: dict) -> str:
         out.append(f"Quotation: refused — {qt.get('reason')}. No quotation was sent.")
     elif qo and qo != "not_requested":
         out += _not_answered("Quotation", qt)
+
+    a = finding.get("advance_deal") or {}
+    ao = a.get("outcome")
+    if ao == "advanced":
+        out.append(f"Deal {a.get('deal_title')!r} moved from {a.get('stage_before')} to "
+                   f"{a.get('stage_after')} (read back as {a.get('stage_after')}).")
+    elif ao == "would_advance":
+        out.append(f"Deal stage: dry run — deal {a.get('deal_title')!r} would move from "
+                   f"{a.get('stage_before')} to {a.get('next_stage')}; nothing was written.")
+    elif ao == "refused":
+        out.append(f"Deal stage: I can't move it — {a.get('reason')}.")
+    elif ao and ao != "not_requested":
+        out += _not_answered("Deal stage", a)
 
     for ref in finding.get("refusals") or []:
         out.append(f"Refused: {ref.get('request')} — {ref.get('reason')}")

@@ -27,6 +27,10 @@ read back, then sent (domain/quotations.py). The deal is re-read right
 before the write and the quote is refused if it has closed meanwhile.
 Under --dry-run nothing is written.
 
+--advance: move that deal (id or exact title) one stage forward, to
+--to-stage if given (it must be the next stage). Never to won or lost.
+Without --asks, an --advance run asks nothing else.
+
 --today: pin the date "this month" and "overdue" are judged against, for
 reproducible runs (the deal data itself is still live).
 
@@ -68,7 +72,8 @@ from transport.mcp_client import client_from_env, has_credentials
 RUN_ID_RE = re.compile(r"[\w.-]+")
 
 
-def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = None) -> str:
+def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = None,
+                advance: dict | None = None) -> str:
     parts = []
     if "closing_this_month" in asks:
         parts.append("what closes this month")
@@ -77,6 +82,9 @@ def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = 
     if "quote" in asks:
         parts.append(f"quote {qty} units of {item or '(unspecified item)'} off the real BOM price"
                      + (f" as a quotation on deal {deal}" if deal else ""))
+    if advance:
+        parts.append(f"move deal {advance['deal_ref']} forward one stage"
+                     + (f" to {advance['target_stage']}" if advance.get("target_stage") else ""))
     query = ", and ".join(parts) + "?"
     return query[0].upper() + query[1:]  # not .capitalize(): it lowercases "BOM"
 
@@ -131,8 +139,13 @@ def main() -> int:
     ap.add_argument("--qty", type=int, default=500)
     ap.add_argument("--deal", default=None, metavar="DEAL_ID",
                     help="draft and send the quote as a Quotation on this deal")
-    ap.add_argument("--asks", default=",".join(plans.ASKS),
-                    help=f"comma-separated subset of {','.join(plans.ASKS)}")
+    ap.add_argument("--asks", default=None,
+                    help=f"comma-separated subset of {','.join(plans.ASKS)} "
+                         "(default: all three, or none with --advance)")
+    ap.add_argument("--advance", default=None, metavar="DEAL",
+                    help="move this deal (id or exact title) one stage forward")
+    ap.add_argument("--to-stage", default=None, choices=plans.ADVANCE_STAGES,
+                    help="the stage --advance should reach; must be the deal's next one")
     ap.add_argument("--chat", default=None, metavar="QUESTION",
                     help="free-form question via the LLM tool loop instead of the graph")
     ap.add_argument("--today", type=dt.date.fromisoformat, default=None, metavar="YYYY-MM-DD",
@@ -149,7 +162,13 @@ def main() -> int:
     if args.run_id and not RUN_ID_RE.fullmatch(args.run_id):
         ap.error("--run-id may only contain letters, digits, '.', '_' and '-'")
 
-    asks = [a.strip() for a in args.asks.split(",") if a.strip()]
+    if args.to_stage and not args.advance:
+        ap.error("--to-stage needs --advance")
+    if args.asks is None:
+        asks = [] if args.advance else list(plans.ASKS)
+    else:
+        asks = [a.strip() for a in args.asks.split(",") if a.strip()]
+    advance = {"deal_ref": args.advance, "target_stage": args.to_stage} if args.advance else None
     unknown = sorted(set(asks) - set(plans.ASKS))
     if unknown:   # before login, so a typo never leaves a session behind
         ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
@@ -160,7 +179,7 @@ def main() -> int:
 
     run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
                              + "-" + uuid.uuid4().hex[:6])
-    query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal)
+    query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal, advance)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
                   prompt=query, dry_run=args.dry_run,
                   today=args.today.isoformat() if args.today else None,
@@ -169,7 +188,8 @@ def main() -> int:
     run.save(run_dir)  # on disk from the start: a crash leaves ended="running", not nothing
     t0 = time.time()
 
-    plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty, "deal_id": args.deal}
+    plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty, "deal_id": args.deal,
+                 "advance": advance}
     if args.question:
         # Classify before anything is written, so the route is known before a
         # session is opened.
@@ -190,7 +210,7 @@ def main() -> int:
         run.intent = intent
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {**{k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")},
-                     "deal_id": args.deal}
+                     "deal_id": args.deal, "advance": intent.get("advance")}
 
     try:
         client = LoggedClient(client_from_env(env), run_dir / "calls.jsonl")

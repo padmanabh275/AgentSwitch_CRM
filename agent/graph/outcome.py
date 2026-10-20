@@ -30,6 +30,8 @@ _DOMAIN_TO_STATUS = {
     "would_send": ANSWERED,
     "pending_approval": ANSWERED,   # unpriced quotation submitted for margin approval
     "would_submit": ANSWERED,       # dry run
+    "advanced": ANSWERED,           # deal moved one stage and read back
+    "would_advance": ANSWERED,      # dry run
     "refused": REFUSED,
     "escalated": ESCALATED,
     "deferred": DEFERRED,

@@ -14,6 +14,7 @@ import re
 from transport.llm_client import LLMError, call_llm, parse_json_object, with_schema_instruction
 
 ASKS = ("closing_this_month", "at_risk", "quote")
+OPEN_STAGES = ("new", "qualification", "proposal", "negotiation")
 
 # The JSON is under 200 tokens, but a reasoning model can spend most of a
 # small budget before writing it: the hosted run's model (deepseek-v4p1-flash)
@@ -50,22 +51,33 @@ SCHEMA = {
             },
             "description": "Parts the agent must refuse: not a sales agent's job, or an action it has no tool for.",
         },
+        "advance_deal": {
+            "type": "object",
+            "properties": {
+                "deal_ref": {"type": "string"},
+                "target_stage": {"type": "string"},
+            },
+            "required": ["deal_ref", "target_stage"],
+            "description": "A request to move one open deal forward a stage: the deal exactly as written (id or title) and the stage asked for, if any. Both empty if not asked.",
+        },
         "other": {
             "type": "string",
             "description": "An in-scope request the agent can do that isn't one of the asks: looking up one deal or lead. Empty if none.",
         },
     },
-    "required": ["asks", "item_ref", "qty", "out_of_scope", "other"],
+    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "other"],
 }
 
 SYSTEM_PROMPT = """You classify requests sent to the Pipeline/Sales agent of \
 Suryodaya Precision Works. Do not answer the request; only classify it.
 
 The agent can do only these things: answer its three standard questions, \
-look up one deal or lead, and escalate to a human colleague what it can't \
-do itself (e.g. a quote it can't price). \
-It cannot send email or messages, start follow-up sequences, raise or send \
-invoices, or create, change, merge or delete records.
+look up one deal or lead, move one open deal forward a stage in the funnel \
+(new -> qualification -> proposal -> negotiation), and escalate to a human \
+colleague what it can't do itself (e.g. a quote it can't price). \
+It cannot mark a deal won or lost, send email or messages, start follow-up \
+sequences, raise or send invoices, or otherwise create, change, merge or \
+delete records.
 
 The agent's three standard questions (asks):
 - closing_this_month: which deals are expected to close this month.
@@ -82,8 +94,13 @@ default; 0 if not stated.
 (a) not a sales agent's job at all, e.g. payroll, salaries or commissions, \
 HR, accounting, or a discount beyond policy; (b) an action the agent has no \
 tool for, even if it is sales work, e.g. emailing a quotation, starting a \
-follow-up sequence, raising an invoice, marking a deal lost or merging \
-records (reason: no tool for it).
+follow-up sequence, raising an invoice, marking a deal won or lost, \
+converting a lead, or merging records (reason: no tool for it).
+- advance_deal: a request to move a deal forward ("move deal X to proposal", \
+"progress deal X", "qualify deal X"). deal_ref is the deal exactly as \
+written (id or title); target_stage is the stage named (qualification, \
+proposal or negotiation), or empty if none was named. Never put winning or \
+losing a deal here: that goes in out_of_scope. Both empty if not asked.
 - other: an in-scope request the agent can do that isn't one of the three \
 questions, e.g. "look up deal <id>" or "what's the status of lead X". Never \
 put an action from (b) here. Empty if none."""
@@ -116,8 +133,8 @@ _NO_TOOL = (
 _LOOKUP = re.compile(r"\b(?:look(?:\s+|-)?up|lookup|status of|find)\b", re.I)
 
 
-def _route(asks: list, out_of_scope: list, other: str | None) -> str:
-    if asks or (out_of_scope and not other):
+def _route(asks: list, out_of_scope: list, other: str | None, advance: dict | None = None) -> str:
+    if asks or advance or (out_of_scope and not other):
         return "graph"
     return "chat"   # anything else in scope — or unclassifiable — goes to the tool loop
 
@@ -135,9 +152,28 @@ def validate(raw: dict) -> dict:
         for o in (raw.get("out_of_scope") or []) if isinstance(o, dict) and o.get("request")
     ]
     other = (raw.get("other") or "").strip() or None
+    advance, refused = _advance(raw.get("advance_deal"))
+    out_of_scope += refused
 
-    return {"route": _route(asks, out_of_scope, other), "asks": asks, "item_ref": item_ref,
-            "qty": qty, "out_of_scope": out_of_scope, "other": other}
+    return {"route": _route(asks, out_of_scope, other, advance), "asks": asks, "item_ref": item_ref,
+            "qty": qty, "out_of_scope": out_of_scope, "advance": advance, "other": other}
+
+
+def _advance(raw) -> tuple[dict | None, list[dict]]:
+    """The deal move, or None; plus a refusal when the stage asked for isn't
+    an open one (won, lost, anything else). That is never turned into "the
+    next stage": a request to win a deal must not move it."""
+    if not isinstance(raw, dict):
+        return None, []
+    ref = str(raw.get("deal_ref") or "").strip()
+    target = str(raw.get("target_stage") or "").strip().lower().replace(" ", "_") or None
+    if not ref and not target:
+        return None, []
+    if target and target not in OPEN_STAGES:
+        return None, [{"request": f"move deal {ref or '(unnamed)'} to {target}",
+                       "reason": "only open stages (qualification, proposal, negotiation); "
+                                 "marking a deal won or lost is a person's decision"}]
+    return {"deal_ref": ref or None, "target_stage": target}, []
 
 
 def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict:
@@ -160,7 +196,7 @@ def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict
     out_of_scope = list(intent.get("out_of_scope") or []) + found
     updated = {**intent, "out_of_scope": out_of_scope, "other": other}
     if not keep_route:
-        updated["route"] = _route(updated.get("asks") or [], out_of_scope, other)
+        updated["route"] = _route(updated.get("asks") or [], out_of_scope, other, updated.get("advance"))
     return updated
 
 
@@ -168,7 +204,7 @@ def classifier_fallback(error: str) -> dict:
     """The intent to run with when classification failed: the chat loop, with
     nothing pre-decided. `classifier_error` keeps the reason on the record."""
     return {"route": "chat", "asks": [], "item_ref": None, "qty": None,
-            "out_of_scope": [], "other": None, "classifier_error": error}
+            "out_of_scope": [], "advance": None, "other": None, "classifier_error": error}
 
 
 def _reply_json(resp: dict):

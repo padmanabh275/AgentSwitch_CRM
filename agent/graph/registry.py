@@ -9,6 +9,8 @@ quotation writes, create_quotation and send_quotation: they run only when
 the request names a deal (run.py --deal) and the item has a BOM price.
 For an unpriced item on a named deal, draft_for_approval and
 submit_for_approval take the margin-approval route instead (no rate sent).
+advance_deal moves an open deal exactly one stage forward (new ->
+qualification -> proposal -> negotiation); won and lost stay out of reach.
 
 Node functions take (ctx, args, outcomes) where `outcomes` maps node id ->
 NodeOutcome for everything finished so far. Which upstream node a function
@@ -21,7 +23,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from domain import deals, items, quotations
+from domain import deal_stage, deals, items, quotations
 from graph.finding import build_finding
 from graph.outcome import ANSWERED, NodeOutcome
 from harness import gate
@@ -139,6 +141,11 @@ REGISTRY: dict[str, NodeDef] = {
         fn=lambda ctx, a, o: quotations.submit_for_approval(ctx.client, _data(o, a["drafted"]),
                                                             dry_run=ctx.dry_run),
         description="Quotation draft -> pending_approval (margin approval prices it).",
+        writes=True),
+    "advance_deal": NodeDef(
+        fn=lambda ctx, a, o: deal_stage.advance_deal(ctx.client, a["deal_ref"], a.get("target_stage"),
+                                                     dry_run=ctx.dry_run),
+        description="Move an open deal one stage forward, never to won/lost; read it back.",
         writes=True),
     "refuse": NodeDef(
         fn=lambda ctx, a, o: {"outcome": "refused", **a},
