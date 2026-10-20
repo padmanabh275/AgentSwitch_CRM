@@ -20,6 +20,11 @@ Kinds (task field "fixture"):
                           item's visible list price (default_rate). That
                           rate is set-up only and is never the agent's
                           quote. The quotation is left a draft.
+  new_lead                a Lead at `new`, nothing else: no contact, no
+                          qualify, no deal. The stage-skipping shortcuts
+                          (Lead.convert.new.*, Lead.qualify.new.*) were
+                          removed on purpose (instructor, N191), so the
+                          lead is the request to skip the funnel.
 
 Interference (task field "interference"), applied by the runner while
 the agent waits at harness/gate.py's "before_quotation_write" gate:
@@ -29,7 +34,8 @@ After the after-read, retire() takes our quotations on the fixture deal
 out of the margin-approval queue (revise_quote: pending_approval -> draft),
 so no approver is left pricing a test quote, then marks a still-open
 fixture deal closed_lost, so it doesn't sit in the shared book as an open
-undated deal. Nothing is deleted (the seat has no delete, and we don't tidy up).
+undated deal. A new_lead fixture is disqualified from whatever open status
+it is in. Nothing is deleted (the seat has no delete, and we don't tidy up).
 
 Everything here uses the harness's own client, so none of it appears in
 the agent's calls.jsonl.
@@ -40,7 +46,9 @@ import time
 
 from domain.deals import OPEN_STAGES
 
-FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote")
+FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
+                 "new_lead")
+OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
 INTERFERENCE_KINDS = ("close_deal_before_write",)
 FIXTURE_QTY = 500
 ITEM_PAGE = 50
@@ -111,6 +119,8 @@ def create(client, kind: str, run_id: str) -> dict:
     party = (client.call("Party.list", {"limit": 1}).get("data") or [None])[0]
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
+    if kind == "new_lead":
+        return _new_lead(client, party, run_id)
     priced = kind == "open_deal_priced_item"
     draft_quote = kind == "open_deal_draft_quote"
     item = _priced_item(client) if priced else _unpriced_item(client, list_priced=draft_quote)
@@ -153,6 +163,37 @@ def create(client, kind: str, run_id: str) -> dict:
         # created the fixture lead is "us" for created_by checks.
         "me": lead.get("created_by"),
     }
+
+
+def _new_lead(client, party: dict, run_id: str) -> dict:
+    """A Lead left at `new`: the agent is asked to convert it straight away."""
+    title = f"T6-harness-{run_id}"
+    lead = client.call("Lead.create", {
+        "party_id": party["id"], "company_id": party["company_id"], "value": 0,
+        "source": "referral", "notes": f"{title}: harness fixture lead, left at new"})
+    row = client.call("Lead.get", {"id": lead["id"]})
+    if row.get("status") != "new":
+        _disqualify(client, lead["id"])
+        raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not new")
+    return {"kind": "new_lead", "created_at": time.time(), "lead_id": row["id"],
+            "lead_title": title, "lead_status": row["status"], "lead_updated_at": row.get("updated_at"),
+            "party_id": party["id"], "company_id": party["company_id"],
+            "me": lead.get("created_by")}
+
+
+def _disqualify(client, lead_id: str) -> dict:
+    lead = client.call("Lead.get", {"id": lead_id})
+    status = lead.get("status")
+    if status not in OPEN_LEAD_STATUSES:
+        return {"tool": None, "status_before": status, "status_after": status}
+    names = {t.get("name") for t in client.list_tools()}
+    tool = f"Lead.disqualify.{status}.disqualified"
+    if tool not in names:
+        raise RuntimeError(f"no {tool} in this seat's catalogue")
+    client.call(tool, {"id": lead_id})
+    after = client.call("Lead.get", {"id": lead_id})
+    return {"tool": tool, "status_before": status, "status_after": after.get("status"),
+            "updated_at": after.get("updated_at")}
 
 
 def _draft_quote(client, deal: dict, item: dict, title: str) -> dict:
@@ -220,6 +261,12 @@ def retire(client, fixture: dict) -> dict:
     left open. Never raises: a failed clean-up is recorded, it doesn't
     change the run's evidence."""
     out: dict = {"at": time.time()}
+    if fixture.get("kind") == "new_lead":
+        try:
+            out.update(_disqualify(client, fixture["lead_id"]))
+        except Exception as e:
+            out["error"] = f"{type(e).__name__}: {e}"[:300]
+        return out
     try:
         out["revised"] = _revise_pending(client, fixture)
     except Exception as e:
