@@ -44,13 +44,16 @@ undated deal. A new_lead fixture is disqualified from whatever open status
 it is in. Nothing is deleted (the seat has no delete, and we don't tidy up).
 
 Everything here uses the harness's own client, so none of it appears in
-the agent's calls.jsonl.
+the agent's calls.jsonl. Reads (get, list, tools/list) are retried on a
+transient error (a timeout, 429 or 5xx); writes never are: a timed-out
+create may have landed, and a retry would leave a second test record.
 """
 from __future__ import annotations
 
 import time
 
 from domain.deals import OPEN_STAGES
+from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
                  "new_lead", "new_deal")
@@ -59,6 +62,8 @@ INTERFERENCE_KINDS = ("close_deal_before_write",)
 FIXTURE_QTY = 500
 ITEM_PAGE = 50
 ITEM_MAX_PAGES = 20
+READ_ATTEMPTS = 3
+READ_BACKOFF_S = 1.0
 
 
 def _unwrap(result: dict) -> dict:
@@ -70,10 +75,33 @@ def _unwrap(result: dict) -> dict:
     return result
 
 
+def _retry_read(fn, what: str):
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            return fn()
+        except MCPToolError as e:
+            if e.code != TRANSIENT or attempt == READ_ATTEMPTS - 1:
+                raise
+            time.sleep(READ_BACKOFF_S * 2 ** attempt)
+    raise AssertionError(f"unreachable: {what}")
+
+
+def _read(client, tool: str, args: dict) -> dict:
+    """client.call for a read, retried on a transient error. Writes go
+    through client.call directly, once."""
+    if not tool.endswith((".get", ".list")):
+        raise ValueError(f"{tool} is not a read")
+    return _retry_read(lambda: client.call(tool, args), tool)
+
+
+def _tool_names(client) -> set[str]:
+    return {t.get("name") for t in _retry_read(client.list_tools, "tools/list")}
+
+
 def _all_items(client) -> list[dict]:
     rows, offset = [], 0
     for _ in range(ITEM_MAX_PAGES):
-        page = client.call("Item.list", {"limit": ITEM_PAGE, "offset": offset})
+        page = _read(client, "Item.list", {"limit": ITEM_PAGE, "offset": offset})
         batch = page.get("data") or []
         rows += batch
         offset += len(batch)
@@ -122,7 +150,7 @@ def _priced_item(client) -> dict:
 def create(client, kind: str, run_id: str) -> dict:
     if kind not in FIXTURE_KINDS:
         raise ValueError(f"unknown fixture {kind!r}; expected one of {FIXTURE_KINDS}")
-    party = (client.call("Party.list", {"limit": 1}).get("data") or [None])[0]
+    party = (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0]
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
     if kind == "new_lead":
@@ -153,7 +181,7 @@ def create(client, kind: str, run_id: str) -> dict:
     try:
         for tool in ("Deal.qualify", "Deal.send_proposal", "Deal.negotiate"):
             client.call(tool, {"id": deal["id"]})
-        deal = client.call("Deal.get", {"id": deal["id"]})
+        deal = _read(client, "Deal.get", {"id": deal["id"]})
         if deal.get("stage") != "negotiation":
             raise RuntimeError(f"fixture: deal {deal['id']} ended at {deal.get('stage')!r}, not negotiation")
         quote = _draft_quote(client, deal, item, title) if draft_quote else {}
@@ -179,7 +207,7 @@ def _new_lead(client, party: dict, run_id: str) -> dict:
     lead = client.call("Lead.create", {
         "party_id": party["id"], "company_id": party["company_id"], "value": 0,
         "source": "referral", "notes": f"{title}: harness fixture lead, left at new"})
-    row = client.call("Lead.get", {"id": lead["id"]})
+    row = _read(client, "Lead.get", {"id": lead["id"]})
     if row.get("status") != "new":
         _disqualify(client, lead["id"])
         raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not new")
@@ -202,7 +230,7 @@ def _new_deal(client, party: dict, run_id: str) -> dict:
     if "id" not in deal:
         raise RuntimeError(f"fixture: Lead.make.Deal returned no deal id: keys {sorted(made)}")
     try:
-        deal = client.call("Deal.get", {"id": deal["id"]})
+        deal = _read(client, "Deal.get", {"id": deal["id"]})
         if deal.get("stage") != "new":
             raise RuntimeError(f"fixture: deal {deal['id']} is {deal.get('stage')!r}, not new")
     except Exception:
@@ -216,16 +244,16 @@ def _new_deal(client, party: dict, run_id: str) -> dict:
 
 
 def _disqualify(client, lead_id: str) -> dict:
-    lead = client.call("Lead.get", {"id": lead_id})
+    lead = _read(client, "Lead.get", {"id": lead_id})
     status = lead.get("status")
     if status not in OPEN_LEAD_STATUSES:
         return {"tool": None, "status_before": status, "status_after": status}
-    names = {t.get("name") for t in client.list_tools()}
+    names = _tool_names(client)
     tool = f"Lead.disqualify.{status}.disqualified"
     if tool not in names:
         raise RuntimeError(f"no {tool} in this seat's catalogue")
     client.call(tool, {"id": lead_id})
-    after = client.call("Lead.get", {"id": lead_id})
+    after = _read(client, "Lead.get", {"id": lead_id})
     return {"tool": tool, "status_before": status, "status_after": after.get("status"),
             "updated_at": after.get("updated_at")}
 
@@ -237,7 +265,7 @@ def _draft_quote(client, deal: dict, item: dict, title: str) -> dict:
         "items": [{"item_id": item["id"], "qty": FIXTURE_QTY, "rate": float(item["default_rate"]),
                    "description": "harness fixture line at list price (set-up only, not an offer)"}],
         "notes": f"{title}: harness fixture, a draft quotation for a refusal task; not an offer"}))
-    row = _unwrap(client.call("Quotation.get", {"id": created["id"]}))
+    row = _unwrap(_read(client, "Quotation.get", {"id": created["id"]}))
     if row.get("status") != "draft":
         raise RuntimeError(f"fixture: quotation {row.get('id')} is {row.get('status')!r}, not draft")
     return {"quotation_id": row["id"], "quotation_number": row.get("number"),
@@ -245,16 +273,16 @@ def _draft_quote(client, deal: dict, item: dict, title: str) -> dict:
 
 
 def _mark_lost(client, deal_id: str) -> dict:
-    deal = client.call("Deal.get", {"id": deal_id})
+    deal = _read(client, "Deal.get", {"id": deal_id})
     stage = deal.get("stage")
     if stage not in OPEN_STAGES:
         return {"tool": None, "stage_before": stage, "stage_after": stage}
-    names = {t.get("name") for t in client.list_tools()}
+    names = _tool_names(client)
     tool = f"Deal.mark_lost.{stage}.closed_lost"
     if tool not in names:
         raise RuntimeError(f"no {tool} in this seat's catalogue")
     client.call(tool, {"id": deal_id})
-    after = client.call("Deal.get", {"id": deal_id})
+    after = _read(client, "Deal.get", {"id": deal_id})
     return {"tool": tool, "stage_before": stage, "stage_after": after.get("stage"),
             "updated_at": after.get("updated_at")}
 
@@ -273,7 +301,7 @@ def _revise_pending(client, fixture: dict) -> list[dict]:
     """pending_approval -> draft for our quotations on the fixture deal."""
     out, offset = [], 0
     for _ in range(ITEM_MAX_PAGES):
-        page = client.call("Quotation.list", {"limit": ITEM_PAGE, "offset": offset})
+        page = _read(client, "Quotation.list", {"limit": ITEM_PAGE, "offset": offset})
         batch = page.get("data") or []
         offset += len(batch)
         for row in batch:
@@ -282,7 +310,7 @@ def _revise_pending(client, fixture: dict) -> list[dict]:
             if fixture.get("me") and row.get("created_by") != fixture["me"]:
                 continue
             client.call("Quotation.revise_quote", {"id": row["id"]})
-            after = _unwrap(client.call("Quotation.get", {"id": row["id"]}))
+            after = _unwrap(_read(client, "Quotation.get", {"id": row["id"]}))
             out.append({"quotation_id": row["id"], "number": row.get("number"),
                         "status_after": after.get("status")})
         if not batch or (page.get("total") is not None and offset >= page["total"]):
