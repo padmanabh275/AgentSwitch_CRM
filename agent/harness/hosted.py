@@ -15,7 +15,9 @@ that never ran are listed as failed with that reason. The full evidence
 Time: each agent run is killed after --task-timeout seconds, and the batch
 stops starting tasks when --budget-minutes is nearly used up (the rest are
 failed as "time budget exhausted"). Keep the budget a few minutes under the
-toml's timeout_minutes. SIGTERM is turned into a recorded crash.
+toml's timeout_minutes. A spent *token* budget (HTTP 429 budget_exhausted)
+also stops the batch: the rest are skipped with that reason and the summary
+says so. SIGTERM is turned into a recorded crash.
 
 Usage (from agent/):
     python -m harness.hosted [--tasks id,id] [--write] [--out PATH]
@@ -113,7 +115,9 @@ def build_results(tasks: list[dict], entries: dict, scores: dict, instance: str,
                         "evidence": scrub(crash)[:EVIDENCE_CHARS]})
     n_pass = sum(r["passed"] for r in results)
     model = os.environ.get("OPENAI_MODEL") or "glc_v5"
+    budget = any(e.get("budget_exhausted") for e in entries.values())
     summary = (f"{instance}: {n_pass}/{len(results)} tasks passed · {mode} · model {model}"
+               + (" · token budget exhausted (429)" if budget else "")
                + (" · harness crashed" if crash else ""))
     return {"tasks": results, "summary": summary}
 

@@ -44,6 +44,11 @@ class LLMError(Exception):
     pass
 
 
+class LLMBudgetExhausted(LLMError):
+    """HTTP 429 with budget_exhausted: the run's token budget is spent.
+    Not retried — it won't come back within the run."""
+
+
 def openai_config(env: dict | None = None) -> dict | None:
     """The OpenAI-compatible backend's settings, or None to use glc_v5."""
     env = os.environ if env is None else env
@@ -160,6 +165,8 @@ def _post_openai(cfg: dict, payload: dict) -> dict:
             detail = e.read()[:500]
             if e.code == 400:
                 raise _BadRequest(f"model HTTP 400: {detail!r}")
+            if e.code == 429 and b"budget_exhausted" in detail:
+                raise LLMBudgetExhausted(f"model HTTP 429 budget_exhausted: {detail!r}")
             if (e.code == 429 or e.code >= 500) and attempt < TRANSIENT_RETRIES:
                 time.sleep(2 * (attempt + 1))
                 continue
