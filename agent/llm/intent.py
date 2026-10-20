@@ -122,9 +122,10 @@ proposal or negotiation), or empty if none was named. Never put winning or \
 losing a deal here: that goes in out_of_scope. Both empty if not asked.
 - advance_lead: a request to move a lead forward ("mark lead X as \
 contacted", "qualify lead X", "convert lead X into a deal"). lead_ref is the \
-lead exactly as written; target_status is the status named (contacted, \
-qualified or converted; converting into a deal is "converted"), or empty if \
-none was named. Put every such request \
+lead exactly as written; target_status is the status the user wants the \
+lead moved TO (contacted, qualified or converted; converting into a deal is \
+"converted"), never the status it is in now: "Lead X is qualified. Convert \
+it into a deal." is target_status "converted". Empty if none was named. Put every such request \
 here, even one that skips a step: the agent checks the step itself. Never \
 put disqualifying a lead here. Both empty if not asked.
 - other: an in-scope request the agent can do that isn't one of the three \
@@ -224,6 +225,24 @@ def _advance_lead(raw) -> tuple[dict | None, list[dict]]:
     return {"lead_ref": ref or None, "target_status": target}, []
 
 
+# "Convert ... into a deal" names one step only. Live 2026-10-21 the model
+# took "Lead X is qualified. Convert it into a deal." as target "qualified"
+# (the current status), so the lead wasn't converted. A move *to* converted
+# is still checked step by step in domain/lead_stage.py.
+_CONVERT_TO_DEAL = re.compile(r"\bconvert\w*\b.{0,60}?\b(?:in)?to\s+(?:a\s+|the\s+)?deal\b", re.I)
+
+
+def pin_convert_target(intent: dict, text: str) -> dict:
+    """Copy of `intent` whose lead move targets `converted` when the request
+    says to convert the lead into a deal, whatever status the model gave."""
+    lead = intent.get("advance_lead")
+    if not lead or lead.get("target_status") == "converted" or not _CONVERT_TO_DEAL.search(text or ""):
+        return intent
+    return {**intent, "advance_lead": {**lead, "target_status": "converted"},
+            "target_pinned": f"target_status {lead.get('target_status')!r} -> 'converted' "
+                             "(the request says to convert the lead into a deal)"}
+
+
 def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict:
     """Copy of `intent` with no-tool actions from `text` added to out_of_scope.
 
@@ -289,7 +308,7 @@ def parse_request(query: str) -> dict:
             raise IntentError(f"could not classify the request: {e}") from e
         raw = _reply_json(resp)
         if raw is not None:
-            return record_no_tool(validate(raw), query)
+            return pin_convert_target(record_no_tool(validate(raw), query), query)
         text = resp.get("text") or ""
         failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
                         f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")

@@ -1238,6 +1238,42 @@ def check_lead_advanced(f: RunFiles, p: dict) -> list[Check]:
     return out
 
 
+def check_lead_not_converted(f: RunFiles, _p: dict) -> list[Check]:
+    """Asked to convert a qualified lead that already has a deal (made with
+    Lead.make.Deal): converting would make a second deal (drafts/BUG8), so
+    the agent must refuse, call no Lead or Deal write, and leave the lead
+    qualified with its one deal."""
+    v = "lead_not_converted"
+    fx = f.fixture
+    if not fx or not fx.get("lead_id"):
+        return [Check(v, "fixture", "error", "no fixture lead: the harness made none")]
+    if f.dry_run:
+        return [Check(v, "mode", "error", "a write task scored on a dry run")]
+    keys = [(ph, k) for ph in ("before", "after") for k in ("lead_state:{lead_id}", "lead_deals:{lead_id}")]
+    errs = [f"{ph} {k}: {_obs_error(f.obs(ph, k))}" for ph, k in keys if _obs_error(f.obs(ph, k))]
+    if errs:
+        return [Check(v, "ground_truth", "error", "; ".join(errs))]
+    lb, la = f.obs("before", "lead_state:{lead_id}")["row"], f.obs("after", "lead_state:{lead_id}")["row"]
+    db, da = f.obs("before", "lead_deals:{lead_id}")["rows"], f.obs("after", "lead_deals:{lead_id}")["rows"]
+    if lb.get("status") != "qualified" or len(db) != 1:
+        return [Check(v, "premise", "error",
+                      f"before the run the lead was {lb.get('status')!r} with {len(db)} deal(s); "
+                      "the task needs qualified with exactly one")]
+    out = [Check(v, "premise", "pass", f"lead {lb.get('id')} was qualified with deal {db[0]['id']}")]
+    writes = sorted({c["tool"] for c in f.calls
+                     if c.get("tool", "").startswith(FUNNEL_WRITES) and not _is_read(c["tool"])})
+    out.append(Check(v, "no_funnel_write", "fail" if writes else "pass",
+                     f"called {', '.join(writes)}" if writes else "no Lead or Deal write"))
+    same = la.get("status") == "qualified" and la.get("updated_at") == lb.get("updated_at")
+    out.append(Check(v, "lead_untouched", "pass" if same else "fail",
+                     f"status {lb.get('status')} -> {la.get('status')}, updated_at "
+                     f"{lb.get('updated_at')} -> {la.get('updated_at')}"))
+    out.append(Check(v, "no_second_deal", "pass" if len(da) == 1 else "fail",
+                     f"deals from the lead {len(db)} -> {len(da)}"
+                     + (f": {_ids(d['id'] for d in da)}" if len(da) > 1 else "")))
+    return out
+
+
 # ---------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
@@ -1277,6 +1313,8 @@ VERIFIERS: dict[str, Verifier] = {
     "deal_not_won": Verifier(lambda p: ["tools_list", "deal_state:{deal_id}"], check_deal_not_won),
     "deal_not_moved": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_not_moved),
     "deal_advanced": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_advanced),
+    "lead_not_converted": Verifier(lambda p: ["lead_state:{lead_id}", "lead_deals:{lead_id}"],
+                                   check_lead_not_converted),
     "lead_advanced": Verifier(
         lambda p: ["lead_state:{lead_id}"] + (["lead_deals:{lead_id}"] if p.get("makes_deal") else []),
         check_lead_advanced),

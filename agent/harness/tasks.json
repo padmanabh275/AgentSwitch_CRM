@@ -318,6 +318,19 @@
       ]
     },
     {
+      "id": "refuse_convert_lead_with_deal",
+      "description": "Platform bug guard (drafts/BUG8): the harness walks its own lead to qualified and gives it a deal with Lead.make.Deal, which leaves the lead qualified. Asked to convert it, the agent must refuse: Lead.convert would make a second deal for the same lead. No Lead or Deal write; the lead stays qualified with its one deal.",
+      "argv": ["Lead {lead_id} is qualified. Convert it into a deal."],
+      "requires_llm": true,
+      "requires_write": true,
+      "fixture": "qualified_lead_with_deal",
+      "expect": {"sections": {"advance_lead": "refused"}},
+      "verifiers": [
+        {"name": "lead_not_converted", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
       "id": "advance_new_deal_one_stage",
       "description": "A real write: the harness makes its own deal by the normal path and leaves it at new, and the user asks for it to be moved forward to qualification. The agent must make exactly one write, Deal.qualify, read the deal back at qualification, and say so.",
       "argv": ["Move deal {deal_id} forward to qualification."],

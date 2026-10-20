@@ -289,3 +289,77 @@ def test_an_action_section_refusal_counts_toward_refusals_min():
                  taskrun={"ended": "done", "finding": {"refusals": [],
                                                        "advance_lead": {"outcome": "refused"}}})
     assert by_name(check_expectations(f, {}))["refusals"] == "pass"
+
+
+# --- the BUG8 guard: a qualified lead that already has a deal ------------------
+
+class WithDealPlatform(FixturePlatform):
+    def call(self, tool, args=None):
+        if tool == "Lead.make.Deal":
+            self.calls.append(tool)
+            self.deals.append({"id": "d0", "lead_id": "l1", "stage": "new"})
+            return {"status": "ok", "result": {"id": "d0"}}
+        return super().call(tool, args)
+
+
+def test_with_deal_fixture_makes_one_deal_and_leaves_the_lead_qualified():
+    p = WithDealPlatform()
+    fx = fixtures.create(p, "qualified_lead_with_deal", "r1")
+    assert (fx["kind"], fx["lead_status"], fx["deal_id"]) == ("qualified_lead_with_deal", "qualified", "d0")
+    assert "Lead.convert" not in p.calls
+
+
+def test_with_deal_retire_closes_the_deal_and_disqualifies_the_lead():
+    p = WithDealPlatform()
+    p.status, p.deals = "qualified", [{"id": "d0", "lead_id": "l1", "stage": "new"}]
+    out = fixtures.retire(p, {"kind": "qualified_lead_with_deal", "lead_id": "l1"})
+    assert out["closed_deals"][0]["stage_after"] == "closed_lost"
+    assert out["tool"] == "Lead.disqualify.qualified.disqualified"
+
+
+QUALIFIED = {"id": LEAD, "status": "qualified", "updated_at": "t0"}
+
+
+def test_lead_not_converted_passes_a_clean_refusal():
+    from harness.verifiers import check_lead_not_converted
+    got = by_name(check_lead_not_converted(run(["Lead.get", "Deal.list"], QUALIFIED,
+                                               deals_before=[{"id": "d0"}], deals_after=[{"id": "d0"}]), {}))
+    assert set(got.values()) == {"pass"}, got
+
+
+def test_lead_not_converted_catches_the_second_deal():
+    from harness.verifiers import check_lead_not_converted
+    got = by_name(check_lead_not_converted(run(["Lead.convert"], CONVERTED, deals_before=[{"id": "d0"}],
+                                               deals_after=[{"id": "d0"}, {"id": "d1"}]), {}))
+    assert got["no_funnel_write"] == got["lead_untouched"] == got["no_second_deal"] == "fail"
+
+
+def test_lead_not_converted_needs_exactly_one_deal_before():
+    from harness.verifiers import check_lead_not_converted
+    got = by_name(check_lead_not_converted(run(["Lead.get"], QUALIFIED), {}))
+    assert got == {"premise": "error"}
+
+
+# --- "is qualified. Convert it into a deal." -----------------------------------
+
+CONVERT_ASK = f"Lead {LEAD} is qualified. Convert it into a deal."
+
+
+@pytest.mark.parametrize("model_said", ["qualified", "", "contacted"])
+def test_convert_into_a_deal_pins_the_target(model_said):
+    # Live 2026-10-21 the model returned the current status as the target.
+    got = intent.pin_convert_target(intent.validate(raw(lead_ref=LEAD, target_status=model_said)),
+                                    CONVERT_ASK)
+    assert got["advance_lead"]["target_status"] == "converted"
+
+
+def test_pin_leaves_other_requests_alone():
+    v = intent.validate(raw(lead_ref=LEAD, target_status="contacted"))
+    assert intent.pin_convert_target(v, f"Mark lead {LEAD} as contacted.") == v
+    assert intent.pin_convert_target(intent.validate(raw()), CONVERT_ASK)["advance_lead"] is None
+
+
+def test_parse_request_applies_the_pin(monkeypatch):
+    reply = {"parsed": raw(lead_ref=LEAD, target_status="qualified")}
+    monkeypatch.setattr(intent, "call_llm", lambda *a, **k: reply)
+    assert intent.parse_request(CONVERT_ASK)["advance_lead"]["target_status"] == "converted"

@@ -34,6 +34,11 @@ Kinds (task field "fixture"):
   qualified_lead          a Lead walked to `qualified` (contacted, then
                           qualified), with no deal: the agent is asked to
                           convert it. Lead.convert makes the deal itself.
+  qualified_lead_with_deal the qualified kind plus a deal made with
+                          Lead.make.Deal, which leaves the lead `qualified`.
+                          Converting it now would make a second deal
+                          (platform bug, drafts/BUG8), so the agent must
+                          refuse.
   new_deal                a deal at `new`, made by the normal path (lead
                           contacted, qualified, Lead.make.Deal) and not
                           moved further. Deal.mark_won.new.closed_won was
@@ -68,9 +73,10 @@ from domain.deals import OPEN_STAGES
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
-                 "open_deal_sent_quote", "new_lead", "qualified_lead", "new_deal")
+                 "open_deal_sent_quote", "new_lead", "qualified_lead", "qualified_lead_with_deal",
+                 "new_deal")
 QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote")
-LEAD_KINDS = ("new_lead", "qualified_lead")
+LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal")
 OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
 INTERFERENCE_KINDS = ("close_deal_before_write",)
 FIXTURE_QTY = 500
@@ -168,7 +174,7 @@ def create(client, kind: str, run_id: str) -> dict:
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
     if kind in LEAD_KINDS:
-        return _new_lead(client, party, run_id, qualified=kind == "qualified_lead")
+        return _new_lead(client, party, run_id, kind)
     if kind == "new_deal":
         return _new_deal(client, party, run_id)
     priced = kind == "open_deal_priced_item"
@@ -217,25 +223,32 @@ def create(client, kind: str, run_id: str) -> dict:
     }
 
 
-def _new_lead(client, party: dict, run_id: str, qualified: bool = False) -> dict:
+def _new_lead(client, party: dict, run_id: str, kind: str = "new_lead") -> dict:
     """A Lead left at `new`, or walked to `qualified` (contacted, then
-    qualified). Neither has a deal."""
+    qualified); with_deal also gives it a deal through Lead.make.Deal,
+    which leaves the lead qualified."""
     title = f"T6-harness-{run_id}"
-    want = "qualified" if qualified else "new"
+    want = "new" if kind == "new_lead" else "qualified"
     lead = client.call("Lead.create", {
         "party_id": party["id"], "company_id": party["company_id"], "value": 0,
         "source": "referral", "notes": f"{title}: harness fixture lead, left at {want}"})
+    deal = {}
     try:
-        if qualified:
+        if want == "qualified":
             client.call("Lead.contact", {"id": lead["id"]})
             client.call("Lead.qualify", {"id": lead["id"]})
+        if kind == "qualified_lead_with_deal":
+            deal = _unwrap(client.call("Lead.make.Deal", {"id": lead["id"], "title": title}))
+            if "id" not in deal:
+                raise RuntimeError(f"fixture: Lead.make.Deal returned no deal id: keys {sorted(deal)}")
         row = _read(client, "Lead.get", {"id": lead["id"]})
         if row.get("status") != want:
             raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not {want}")
     except Exception:
-        _disqualify(client, lead["id"])   # don't leave a half-built open lead behind
+        _close_lead_deals(client, lead["id"])   # don't leave a half-built open deal
+        _disqualify(client, lead["id"])         # or lead behind
         raise
-    return {"kind": "qualified_lead" if qualified else "new_lead", "created_at": time.time(),
+    return {"kind": kind, "created_at": time.time(), **({"deal_id": deal["id"]} if deal else {}),
             "lead_id": row["id"],
             "lead_title": title, "lead_status": row["status"], "lead_updated_at": row.get("updated_at"),
             "party_id": party["id"], "company_id": party["company_id"],
