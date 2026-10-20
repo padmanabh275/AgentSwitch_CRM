@@ -36,7 +36,8 @@ reproducible path for grading.
 | `"question"` | Free-text question, classified and routed as above. |
 | `--item ITEM`, `--qty N` | Flags path: the item to quote (id, code or name; `--item-id` is an alias) and quantity (default 500). Without `--item` the quote is refused ("which item?"). |
 | `--deal DEAL_ID` | Make the quote a Quotation on that deal: drafted at the BOM price, read back, then sent (`domain/quotations.py`). The deal is re-read just before the write; if it closed meanwhile, nothing is written and the quotation is refused. |
-| `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three). |
+| `--advance DEAL`, `--to-stage STAGE` | Move that deal (id or exact title) one stage forward: new → qualification → proposal → negotiation, with the one transition tool for that step, then read it back (`domain/deal_stage.py`). `--to-stage` must be the next stage: skipping, going back, a closed deal and anything past negotiation (won/lost stays a person's decision) are refused with no write. In free text: "move deal X to proposal". |
+| `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three, or none with `--advance`). |
 | `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
 | `--chat "question"` | Straight to the LLM tool loop, skipping classification. |

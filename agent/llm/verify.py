@@ -121,6 +121,17 @@ def verify_claims(text: str, finding: dict) -> dict:
     elif quotation.get("outcome") in ("would_send", "would_submit") and not re.search(r"dry[- ]run", text, re.I):
         missing.append("dry run: no quotation was written")
 
+    advance = finding.get("advance_deal") or {}
+    if advance.get("outcome") == "advanced" and not (
+            advance.get("deal_title") and advance["deal_title"] in text
+            and re.search(re.escape(str(advance.get("stage_after"))), text, re.I)):
+        missing.append(f"deal {advance.get('deal_title')!r} moved to {advance.get('stage_after')}")
+    elif advance.get("outcome") == "refused" and not re.search(
+            r"not (?:been )?(?:moved|advanced|changed)|can(?:no|')t|unable|refus|won't|will not", text, re.I):
+        missing.append("the deal was not moved, and why")
+    elif advance.get("outcome") == "would_advance" and not re.search(r"dry[- ]run", text, re.I):
+        missing.append("dry run: the deal was not moved")
+
     refusals = [r.get("request") for r in finding.get("refusals") or []]
     if refusals and not REFUSAL_RE.search(text):
         missing.append("that you can't do this, in so many words: " + "; ".join(map(str, refusals)))
