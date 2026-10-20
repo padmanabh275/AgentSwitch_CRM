@@ -34,14 +34,20 @@ def test_server_token_beats_local_password_and_url(no_network):
     assert client.base_url == "https://copy.example"
 
 
-def test_server_token_without_base_url_defaults_to_suryodaya(no_network):
-    client = client_from_env({"AGENTSWITCH_TOKEN": "seat-tok"})
-    assert client.base_url == mcp_client.SURYODAYA
+def test_server_token_without_base_url_is_an_error_not_the_public_url(no_network):
+    # The hosted run calls an internal sandbox: never fall back to a public URL,
+    # not even with a local AS or password around.
+    for env in ({"AGENTSWITCH_TOKEN": "seat-tok"},
+                {"AGENTSWITCH_TOKEN": "seat-tok", "AS": mcp_client.SURYODAYA,
+                 "EMAIL": "me@example.com", "SURYODAYA_PW": "pw"}):
+        with pytest.raises(RuntimeError, match="AGENTSWITCH_BASE_URL"):
+            client_from_env(env)
 
 
 def test_server_token_client_never_relogs_on_auth(no_network):
     # Token-only: a 401 must surface as `auth`, not trigger a password login.
-    client = client_from_env({"AGENTSWITCH_TOKEN": "seat-tok"})
+    client = client_from_env({"AGENTSWITCH_TOKEN": "seat-tok",
+                              "AGENTSWITCH_BASE_URL": "https://copy.example"})
     assert client._password == ""
 
 

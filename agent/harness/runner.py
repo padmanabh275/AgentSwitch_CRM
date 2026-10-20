@@ -40,7 +40,7 @@ from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
 from harness import fixtures, gate, verifiers
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
-from transport.mcp_client import client_from_env, instance_from_env
+from transport.mcp_client import BUDGET_EXHAUSTED, client_from_env, instance_from_env
 
 TASKS_PATH = AGENT_DIR / "harness" / "tasks.json"
 TASKS_FORMAT = "t6-tasks-v1"
@@ -49,6 +49,23 @@ AGENT_TIMEOUT_S = 900
 # scoring), and the least agent time worth starting a task with.
 TASK_RESERVE_S = 60
 MIN_AGENT_S = 60
+# A spent token budget is HTTP 429 budget_exhausted (not 401), and it doesn't
+# come back within the batch: every later task would fail the same way.
+BUDGET_REASON = "token budget exhausted (HTTP 429 budget_exhausted) before this task started"
+BUDGET_EVIDENCE = ("taskrun.json", "calls.jsonl", "chat_trace.json", "graph.json")
+
+
+def budget_exhausted_in(run_dir: Path) -> bool:
+    """Whether the run's own records show a 429 budget_exhausted, from the
+    platform (mcp_client) or the model (llm_client)."""
+    for name in BUDGET_EVIDENCE:
+        p = run_dir / name
+        try:
+            if p.exists() and BUDGET_EXHAUSTED in p.read_text(encoding="utf-8", errors="replace"):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def for_instance(task: dict, instance: str | None) -> dict:
@@ -201,7 +218,9 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
     on_task_done(entry), if given, is called after each task's manifest entry
     is saved — the hosted run uses it to rewrite results.json as it goes. A
     task whose ground-truth read or agent launch raises is recorded as
-    status "error" and the batch carries on.
+    status "error" and the batch carries on. Once a task hits a spent token
+    budget (429 budget_exhausted), the remaining tasks are skipped with
+    BUDGET_REASON instead of run.
     """
     llm_up = not skip_llm and llm_gateway_up()
     llm_skip_reason = ("--skip-llm" if skip_llm
@@ -220,6 +239,7 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
           f"{len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
           f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}", flush=True)
 
+    budget_spent = False
     for task in tasks:
         run_id = f"{batch_id}-{task['id']}"
         entry = {"task_id": task["id"], "run_id": run_id}
@@ -233,6 +253,9 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
         elif task.get("requires_llm") and llm_skip_reason:
             entry.update(status="skipped", reason=llm_skip_reason)
             print(f"  - {task['id']}: skipped ({llm_skip_reason})", flush=True)
+        elif budget_spent:
+            entry.update(status="skipped", reason=BUDGET_REASON)
+            print(f"  - {task['id']}: skipped (token budget exhausted)", flush=True)
         elif left_s < min(MIN_AGENT_S, agent_timeout_s):
             entry.update(status="skipped", reason="time budget exhausted before this task started")
             print(f"  - {task['id']}: skipped (time budget exhausted)", flush=True)
@@ -244,10 +267,15 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
                 entry.update(status="error", run_dir=str(run_dir),
                              reason=f"{type(e).__name__}: {e}"[:500])
                 print(f"  - {task['id']}: error ({entry['reason']})", flush=True)
+                budget_spent = BUDGET_EXHAUSTED in f"{getattr(e, 'code', '')} {e}"
             else:
                 entry.update(status="ran", run_dir=str(run_dir), **result)
                 print(f"  - {task['id']}: exit {result['exit_code']} in {result['seconds']}s "
                       f"-> {run_dir}", flush=True)
+                budget_spent = budget_exhausted_in(run_dir)
+            if budget_spent:
+                entry["budget_exhausted"] = True
+                print(f"  ! {task['id']} hit 429 budget_exhausted: skipping the rest", flush=True)
         manifest["runs"].append(entry)
         write_json(batch_dir / "manifest.json", manifest)
         if on_task_done:

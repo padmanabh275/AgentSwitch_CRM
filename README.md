@@ -52,6 +52,8 @@ Credentials come from `agent/.env`, then the repo's `.env`: `EMAIL` +
 `SURYODAYA_PW` (password login, renewed on a 401), or a bearer `TOKEN`
 (used as is; `AS` overrides the base URL). On the hosted harness run,
 `AGENTSWITCH_TOKEN` + `AGENTSWITCH_BASE_URL` take precedence over all of these.
+The base URL is an internal sandbox address: a token without it is an error,
+never a fall-back to the public instance. There's no `.env` on that run.
 
 **LLM gateway.** LLM calls go through `glc_v5`, a separate local repo (`GLC_URL`, default `http://127.0.0.1:8111`). It's pinned to the `gemini`
 provider (`GLC_PROVIDER`): unpinned, it picks a local Ollama model that writes
@@ -318,7 +320,9 @@ format the whole time, so a crash or timeout still leaves a valid file. A
 task passes only if `score.py` says `pass`; `score` is the fraction of its
 checks that passed. Each agent run is killed after `--task-timeout` (180s)
 and no task starts once `--budget-minutes` (20, under the toml's 25) is
-nearly spent. The run is a dry run; add `--write` to the toml's `run` to test
+nearly spent. A spent token budget is HTTP 429 `budget_exhausted` (not 401):
+it's never retried, the remaining tasks are skipped with that reason, and the
+summary says so. The run is a dry run; add `--write` to the toml's `run` to test
 writes (the instance copy is thrown away). One run per team every 3 days, so
 rehearse locally with only those variables set:
 

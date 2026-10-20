@@ -12,6 +12,8 @@ never reach a JSON-RPC envelope:
     invalid_transition   right tool, wrong current state
     tool_not_available   tool absent from this seat — structural
     transient            network error, timeout, 429, 5xx, non-JSON body
+    budget_exhausted     429 whose body says budget_exhausted: the seat's token
+                         budget is spent. Not transient — retrying can't help
     auth                 401 — token rejected (re-login is tried once here)
     forbidden            403 — e.g. "App 'x' is not enabled for your account"
     unknown              an error envelope without a data.code
@@ -34,6 +36,7 @@ INVALID_ARGUMENTS = "invalid_arguments"
 INVALID_TRANSITION = "invalid_transition"
 TOOL_NOT_AVAILABLE = "tool_not_available"
 TRANSIENT = "transient"
+BUDGET_EXHAUSTED = "budget_exhausted"
 AUTH = "auth"
 FORBIDDEN = "forbidden"
 UNKNOWN = "unknown"
@@ -134,7 +137,13 @@ class MCPClient:
                 raise MCPToolError(f"{name}: HTTP 401", code=AUTH)
             if e.code == 403:
                 raise MCPToolError(f"{name}: HTTP 403 {e.read()[:200]!r}", code=FORBIDDEN)
-            if e.code == 429 or e.code >= 500:
+            if e.code == 429:
+                body = e.read()[:300]
+                if BUDGET_EXHAUSTED.encode() in body:
+                    raise MCPToolError(f"{name}: HTTP 429 budget_exhausted {body!r}",
+                                       code=BUDGET_EXHAUSTED)
+                raise MCPToolError(f"{name}: HTTP 429", code=TRANSIENT)
+            if e.code >= 500:
                 raise MCPToolError(f"{name}: HTTP {e.code}", code=TRANSIENT)
             raw = e.read()  # other 4xx may still carry a JSON-RPC envelope
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -159,12 +168,17 @@ def has_credentials(env: dict) -> bool:
 
 
 def client_from_env(env: dict) -> MCPClient:
-    """The hosted harness run's AGENTSWITCH_TOKEN (+ AGENTSWITCH_BASE_URL) wins
-    over everything, so a stray local .env can never redirect it. Otherwise:
-    password login (EMAIL + SURYODAYA_PW) if set, else the bearer TOKEN, with
-    AS overriding the base URL. Raises RuntimeError if none is present."""
+    """The hosted harness run's AGENTSWITCH_TOKEN + AGENTSWITCH_BASE_URL win
+    over everything, so a stray local .env can never redirect it. The base
+    URL is an internal sandbox address, so a token without one is an error,
+    never a fall-back to the public instance. Otherwise: password login
+    (EMAIL + SURYODAYA_PW) if set, else the bearer TOKEN, with AS overriding
+    the base URL. Raises RuntimeError if none is present."""
     if env.get("AGENTSWITCH_TOKEN"):
-        return MCPClient("", "", base_url=env.get("AGENTSWITCH_BASE_URL") or SURYODAYA,
+        if not env.get("AGENTSWITCH_BASE_URL"):
+            raise RuntimeError("AGENTSWITCH_TOKEN is set but AGENTSWITCH_BASE_URL is not: "
+                               "the hosted run must say which sandbox to call")
+        return MCPClient("", "", base_url=env["AGENTSWITCH_BASE_URL"],
                          token=env["AGENTSWITCH_TOKEN"])
     base = env.get("AS") or SURYODAYA
     if env.get("SURYODAYA_PW"):
@@ -181,7 +195,11 @@ def instance_from_env(env: dict) -> str | None:
     (AS defaults to Suryodaya). None for a URL that isn't in INSTANCES."""
     if env.get("AGENTSWITCH_INSTANCE"):
         return env["AGENTSWITCH_INSTANCE"]
-    base = (env.get("AGENTSWITCH_BASE_URL") if env.get("AGENTSWITCH_TOKEN") else env.get("AS")) \
-        or SURYODAYA
+    if env.get("AGENTSWITCH_TOKEN"):
+        base = env.get("AGENTSWITCH_BASE_URL")
+        if not base:
+            return None
+    else:
+        base = env.get("AS") or SURYODAYA
     base = base.rstrip("/")
     return next((name for name, url in INSTANCES.items() if url == base), None)
