@@ -34,6 +34,10 @@ Without --asks, an --advance run asks nothing else.
 --advance-lead: move that lead (id) one step forward, to --to-status if
 given (it must be the next step). Converting creates the lead's deal.
 
+--order-quote: turn that quotation (number or id) into a sales order. An
+accepted one is converted; a sent one only with --customer-accepted (it is
+accepted first). The deal is left as it is.
+
 --today: pin the date "this month" and "overdue" are judged against, for
 reproducible runs (the deal data itself is still live).
 
@@ -76,7 +80,8 @@ RUN_ID_RE = re.compile(r"[\w.-]+")
 
 
 def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = None,
-                advance: dict | None = None, advance_lead: dict | None = None) -> str:
+                advance: dict | None = None, advance_lead: dict | None = None,
+                accept_quote: dict | None = None) -> str:
     parts = []
     if "closing_this_month" in asks:
         parts.append("what closes this month")
@@ -91,6 +96,11 @@ def build_query(asks: list[str], item: str | None, qty: int, deal: str | None = 
     if advance_lead:
         parts.append(f"move lead {advance_lead['lead_ref']} forward one step"
                      + (f" to {advance_lead['target_status']}" if advance_lead.get("target_status") else ""))
+    if accept_quote:
+        parts.append(("the customer accepted quotation " if accept_quote.get("customer_accepted")
+                      else "turn quotation ") + f"{accept_quote['quotation_ref']}"
+                     + (": make the sales order" if accept_quote.get("customer_accepted")
+                        else " into a sales order"))
     query = ", and ".join(parts) + "?"
     return query[0].upper() + query[1:]  # not .capitalize(): it lowercases "BOM"
 
@@ -156,6 +166,10 @@ def main() -> int:
                     help="move this lead one step forward (converting creates its deal)")
     ap.add_argument("--to-status", default=None, choices=plans.ADVANCE_STATUSES,
                     help="the status --advance-lead should reach; must be the lead's next one")
+    ap.add_argument("--order-quote", default=None, metavar="QUOTATION",
+                    help="turn this quotation (number or id) into a sales order")
+    ap.add_argument("--customer-accepted", action="store_true",
+                    help="with --order-quote: the customer accepted it (a sent quote is accepted first)")
     ap.add_argument("--chat", default=None, metavar="QUESTION",
                     help="free-form question via the LLM tool loop instead of the graph")
     ap.add_argument("--today", type=dt.date.fromisoformat, default=None, metavar="YYYY-MM-DD",
@@ -176,13 +190,17 @@ def main() -> int:
         ap.error("--to-stage needs --advance")
     if args.to_status and not args.advance_lead:
         ap.error("--to-status needs --advance-lead")
+    if args.customer_accepted and not args.order_quote:
+        ap.error("--customer-accepted needs --order-quote")
     if args.asks is None:
-        asks = [] if (args.advance or args.advance_lead) else list(plans.ASKS)
+        asks = [] if (args.advance or args.advance_lead or args.order_quote) else list(plans.ASKS)
     else:
         asks = [a.strip() for a in args.asks.split(",") if a.strip()]
     advance = {"deal_ref": args.advance, "target_stage": args.to_stage} if args.advance else None
     advance_lead = ({"lead_ref": args.advance_lead, "target_status": args.to_status}
                     if args.advance_lead else None)
+    accept_quote = ({"quotation_ref": args.order_quote, "customer_accepted": args.customer_accepted}
+                    if args.order_quote else None)
     unknown = sorted(set(asks) - set(plans.ASKS))
     if unknown:   # before login, so a typo never leaves a session behind
         ap.error(f"unknown --asks {unknown}; choose from {','.join(plans.ASKS)}")
@@ -194,7 +212,7 @@ def main() -> int:
     run_id = args.run_id or (dt.datetime.now(IST).strftime("%Y%m%dT%H%M%S")
                              + "-" + uuid.uuid4().hex[:6])
     query = args.chat or args.question or build_query(asks, args.item, args.qty, args.deal, advance,
-                                                                 advance_lead)
+                                                                 advance_lead, accept_quote)
     run = TaskRun(run_id=run_id, task_id="chat" if args.chat else "pipeline_review",
                   prompt=query, dry_run=args.dry_run,
                   today=args.today.isoformat() if args.today else None,
@@ -204,7 +222,7 @@ def main() -> int:
     t0 = time.time()
 
     plan_args = {"asks": asks, "item_ref": args.item, "qty": args.qty, "deal_id": args.deal,
-                 "advance": advance, "advance_lead": advance_lead}
+                 "advance": advance, "advance_lead": advance_lead, "accept_quote": accept_quote}
     if args.question:
         # Classify before anything is written, so the route is known before a
         # session is opened.
@@ -226,7 +244,8 @@ def main() -> int:
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {**{k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")},
                      "deal_id": args.deal, "advance": intent.get("advance"),
-                     "advance_lead": intent.get("advance_lead")}
+                     "advance_lead": intent.get("advance_lead"),
+                     "accept_quote": intent.get("accept_quote")}
 
     try:
         client = LoggedClient(client_from_env(env), run_dir / "calls.jsonl")

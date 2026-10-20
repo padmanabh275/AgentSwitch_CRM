@@ -77,12 +77,22 @@ SCHEMA = {
             "required": ["lead_ref", "target_status"],
             "description": "A request to move one open lead forward a step (contacted, qualified, or converted into a deal): the lead exactly as written and the status asked for, if any. Both empty if not asked.",
         },
+        "accept_quote": {
+            "type": "object",
+            "properties": {
+                "quotation_ref": {"type": "string"},
+                "customer_accepted": {"type": "boolean"},
+            },
+            "required": ["quotation_ref", "customer_accepted"],
+            "description": "A request to turn a quotation into a sales order: the quotation exactly as written (number or id), and whether the user says the customer accepted it. Empty and false if not asked.",
+        },
         "other": {
             "type": "string",
             "description": "An in-scope request the agent can do that isn't one of the asks: looking up one deal or lead. Empty if none.",
         },
     },
-    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "advance_lead", "other"],
+    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "advance_lead",
+                 "accept_quote", "other"],
 }
 
 SYSTEM_PROMPT = """You classify requests sent to the Pipeline/Sales agent of \
@@ -91,9 +101,9 @@ Suryodaya Precision Works. Do not answer the request; only classify it.
 The agent can do only these things: answer its three standard questions, \
 look up one deal or lead, move one open deal forward a stage in the funnel \
 (new -> qualification -> proposal -> negotiation), move one open lead \
-forward a step (new -> contacted -> qualified -> converted into a deal), and \
-escalate to a human colleague what it can't do itself (e.g. a quote it \
-can't price). \
+forward a step (new -> contacted -> qualified -> converted into a deal), \
+turn a quotation the customer accepted into a sales order, and escalate to \
+a human colleague what it can't do itself (e.g. a quote it can't price). \
 It cannot mark a deal won or lost, disqualify a lead, send email or \
 messages, start follow-up sequences, raise or send invoices, or otherwise \
 create, change, merge or delete records.
@@ -128,6 +138,13 @@ lead moved TO (contacted, qualified or converted; converting into a deal is \
 it into a deal." is target_status "converted". Empty if none was named. Put every such request \
 here, even one that skips a step: the agent checks the step itself. Never \
 put disqualifying a lead here. Both empty if not asked.
+- accept_quote: a request to turn a quotation into a sales order ("the \
+customer accepted QTN-2026-00063, make the order", "convert quotation X \
+into a sales order"). quotation_ref is the quotation exactly as written \
+(number or id). customer_accepted is true only if the user says the \
+customer accepted, agreed to or signed it; a quotation that was only sent \
+is not accepted. Put every such request here, accepted or not: the agent \
+checks it itself. Empty and false if not asked.
 - other: an in-scope request the agent can do that isn't one of the three \
 questions, e.g. "look up deal <id>" or "what's the status of lead X". Never \
 put an action from (b) here. Empty if none."""
@@ -161,8 +178,8 @@ _LOOKUP = re.compile(r"\b(?:look(?:\s+|-)?up|lookup|status of|find)\b", re.I)
 
 
 def _route(asks: list, out_of_scope: list, other: str | None, advance: dict | None = None,
-           advance_lead: dict | None = None) -> str:
-    if asks or advance or advance_lead or (out_of_scope and not other):
+           advance_lead: dict | None = None, accept_quote: dict | None = None) -> str:
+    if asks or advance or advance_lead or accept_quote or (out_of_scope and not other):
         return "graph"
     return "chat"   # anything else in scope — or unclassifiable — goes to the tool loop
 
@@ -184,10 +201,42 @@ def validate(raw: dict) -> dict:
     out_of_scope += refused
     advance_lead, refused = _advance_lead(raw.get("advance_lead"))
     out_of_scope += refused
+    accept_quote = _accept_quote(raw.get("accept_quote"))
 
-    return {"route": _route(asks, out_of_scope, other, advance, advance_lead), "asks": asks,
-            "item_ref": item_ref, "qty": qty, "out_of_scope": out_of_scope, "advance": advance,
-            "advance_lead": advance_lead, "other": other}
+    return {"route": _route(asks, out_of_scope, other, advance, advance_lead, accept_quote),
+            "asks": asks, "item_ref": item_ref, "qty": qty, "out_of_scope": out_of_scope,
+            "advance": advance, "advance_lead": advance_lead, "accept_quote": accept_quote,
+            "other": other}
+
+
+def _accept_quote(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    ref = str(raw.get("quotation_ref") or "").strip()
+    accepted = raw.get("customer_accepted") is True or str(raw.get("customer_accepted")).lower() == "true"
+    if not ref and not accepted:
+        return None
+    return {"quotation_ref": ref or None, "customer_accepted": accepted}
+
+
+# The customer's acceptance is a fact only the user can state, and it makes the
+# agent record a customer decision and create a sales order. So the model's
+# customer_accepted needs the user's own words for it; "sent" is not one.
+_ACCEPTED_WORDS = re.compile(r"\b(?:accept(?:ed|s)?|agreed?|agrees|signed|signs|confirmed)\b", re.I)
+_NOT_ACCEPTED = re.compile(r"\b(?:not|n't|never|hasn't|haven't|didn't|yet to)\b.{0,25}"
+                           r"\b(?:accept|agree|sign|confirm)", re.I)
+
+
+def check_acceptance(intent: dict, text: str) -> dict:
+    """Copy of `intent` with customer_accepted cleared unless the request
+    itself says the customer accepted (recorded as acceptance_cleared)."""
+    order = intent.get("accept_quote")
+    if not order or not order.get("customer_accepted"):
+        return intent
+    if _ACCEPTED_WORDS.search(text or "") and not _NOT_ACCEPTED.search(text or ""):
+        return intent
+    return {**intent, "accept_quote": {**order, "customer_accepted": False},
+            "acceptance_cleared": "the request doesn't say the customer accepted the quotation"}
 
 
 def _advance(raw) -> tuple[dict | None, list[dict]]:
@@ -264,7 +313,7 @@ def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict
     updated = {**intent, "out_of_scope": out_of_scope, "other": other}
     if not keep_route:
         updated["route"] = _route(updated.get("asks") or [], out_of_scope, other, updated.get("advance"),
-                                  updated.get("advance_lead"))
+                                  updated.get("advance_lead"), updated.get("accept_quote"))
     return updated
 
 
@@ -272,8 +321,8 @@ def classifier_fallback(error: str) -> dict:
     """The intent to run with when classification failed: the chat loop, with
     nothing pre-decided. `classifier_error` keeps the reason on the record."""
     return {"route": "chat", "asks": [], "item_ref": None, "qty": None,
-            "out_of_scope": [], "advance": None, "advance_lead": None, "other": None,
-            "classifier_error": error}
+            "out_of_scope": [], "advance": None, "advance_lead": None, "accept_quote": None,
+            "other": None, "classifier_error": error}
 
 
 def _reply_json(resp: dict):
@@ -308,7 +357,7 @@ def parse_request(query: str) -> dict:
             raise IntentError(f"could not classify the request: {e}") from e
         raw = _reply_json(resp)
         if raw is not None:
-            return pin_convert_target(record_no_tool(validate(raw), query), query)
+            return check_acceptance(pin_convert_target(record_no_tool(validate(raw), query), query), query)
         text = resp.get("text") or ""
         failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
                         f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")

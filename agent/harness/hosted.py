@@ -177,8 +177,10 @@ def main(argv: list[str] | None = None) -> int:
                 print("[hosted] leaving out priced-item write tasks: "
                       "no sellable item with a readable standard_rate", flush=True)
         save()
+        # The hosted instance is a throwaway copy: records the seat can't
+        # remove (sales orders) are fine there.
         runner.run_batch(data, tasks, write=args.write, on_task_done=on_task_done,
-                         agent_timeout_s=args.task_timeout, deadline=deadline)
+                         agent_timeout_s=args.task_timeout, deadline=deadline, allow_permanent=True)
     except BaseException as e:  # incl. KeyboardInterrupt/SystemExit: still leave a valid file
         crash = f"{type(e).__name__}: {e} | {traceback.format_exc(limit=3)[-300:]}"
         save(crash)

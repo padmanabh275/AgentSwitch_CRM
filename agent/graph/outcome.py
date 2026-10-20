@@ -32,6 +32,8 @@ _DOMAIN_TO_STATUS = {
     "would_submit": ANSWERED,       # dry run
     "advanced": ANSWERED,           # deal moved one stage and read back
     "would_advance": ANSWERED,      # dry run
+    "ordered": ANSWERED,            # accepted quotation converted into a sales order
+    "would_order": ANSWERED,        # dry run
     "refused": REFUSED,
     "escalated": ESCALATED,
     "deferred": DEFERRED,

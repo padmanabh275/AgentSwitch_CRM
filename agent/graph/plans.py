@@ -11,6 +11,7 @@ built; the planner (graph/planner.py) extends the graph from there.
              └─────────(+ draft_for_approval ── submit_for_approval)┤  (with a deal, unpriced)
     advance_deal (move a deal one stage) ───────────────────┤
     advance_lead (move a lead one status) ──────────────────┤
+    accept_quote (accepted quotation -> sales order) ───────┤
     refuse_1..n (out-of-scope parts) ───────────────────────┤
                                             build_finding (needs=done) ── narrate
 """
@@ -39,6 +40,7 @@ SECTION_SOURCES = {
                   "send_quotation", "create_quotation", "get_deal"],
     "advance_deal": ["advance_deal"],
     "advance_lead": ["advance_lead"],
+    "accept_quote": ["accept_quote"],
 }
 
 NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own "
@@ -48,7 +50,8 @@ NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own
 def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | None = None,
                     out_of_scope: list[dict] | None = None,
                     other: str | None = None, deal_id: str | None = None,
-                    advance: dict | None = None, advance_lead: dict | None = None) -> list[TaskSpec]:
+                    advance: dict | None = None, advance_lead: dict | None = None,
+                    accept_quote: dict | None = None) -> list[TaskSpec]:
     """item_ref may be an id, code or name. qty None means "not stated":
     the quote is refused rather than assuming a quantity. deal_id makes the
     quote a Quotation on that deal (the planner adds the writes once the
@@ -56,7 +59,9 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
     advance ({"deal_ref", "target_stage"}) moves that deal one stage forward;
     whether the step is allowed is decided in domain/deal_stage.py.
     advance_lead ({"lead_ref", "target_status"}) does the same for a lead
-    (domain/lead_stage.py)."""
+    (domain/lead_stage.py). accept_quote ({"quotation_ref",
+    "customer_accepted"}) turns that quotation into a sales order
+    (domain/quote_order.py)."""
     unknown = set(asks) - set(ASKS)
     if unknown:
         raise ValueError(f"unknown asks {sorted(unknown)}; expected a subset of {ASKS}")
@@ -98,6 +103,11 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
             "lead_ref": advance_lead.get("lead_ref"),
             "target_status": advance_lead.get("target_status")}))
         leaves.append("advance_lead")
+    if accept_quote:
+        tasks.append(TaskSpec("accept_quote", "accept_quote", args={
+            "quotation_ref": accept_quote.get("quotation_ref"),
+            "customer_accepted": bool(accept_quote.get("customer_accepted"))}))
+        leaves.append("accept_quote")
 
     refusals = []
     for i, part in enumerate(out_of_scope or [], start=1):
@@ -113,7 +123,8 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
                                 "refusals": refusals, "not_handled": not_handled,
                                 "quotation_requested": bool(deal_id and "quote" in asks),
                                 "advance_requested": bool(advance),
-                                "advance_lead_requested": bool(advance_lead)}))
+                                "advance_lead_requested": bool(advance_lead),
+                                "accept_quote_requested": bool(accept_quote)}))
     tasks.append(TaskSpec("narrate", "narrate", args={"finding": "build_finding"},
                           deps=["build_finding"]))
     return tasks

@@ -55,6 +55,11 @@ lead moved from status_before to status_after, and if it was converted give \
 the new deal's title (deal_title); for "refused", say the lead was not moved \
 and why, in the words of its reason; for "would_advance", say it was a dry \
 run and nothing was written.
+- If accept_quote is present and not "not_requested": for "ordered", give the \
+quotation number, the sales order number (order_number) and that it was made \
+from the accepted quotation, and say the deal was left as it is; for \
+"refused", say no order was made and why, in the words of its reason; for \
+"would_order", say it was a dry run and nothing was written.
 - For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
 bom_price_redacted is true it's hidden from this seat, not unset), and that no price was invented.
 - If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
@@ -171,6 +176,18 @@ def render_template(finding: dict) -> str:
         out.append(f"Lead: I can't move it — {ld.get('reason')}.")
     elif lo and lo != "not_requested":
         out += _not_answered("Lead", ld)
+
+    aq = finding.get("accept_quote") or {}
+    ao2 = aq.get("outcome")
+    if ao2 == "ordered":
+        out.append(f"Sales order {aq.get('order_number')} made from quotation {aq.get('number')} "
+                   f"({aq.get('reason')}).")
+    elif ao2 == "would_order":
+        out.append(f"Sales order: dry run — {aq.get('reason')}.")
+    elif ao2 == "refused":
+        out.append(f"Sales order: I can't make it — {aq.get('reason')}.")
+    elif ao2 and ao2 != "not_requested":
+        out += _not_answered("Sales order", aq)
 
     for ref in finding.get("refusals") or []:
         out.append(f"Refused: {ref.get('request')} — {ref.get('reason')}")

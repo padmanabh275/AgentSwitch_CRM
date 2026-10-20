@@ -252,6 +252,21 @@
       ]
     },
     {
+      "id": "order_from_accepted_quote",
+      "description": "A real write that makes a sales order: the harness sends a quotation on its own open deal (list price, set-up only) and the user says the customer accepted it. The agent must accept it (Quotation.accept.sent.accepted), then convert it with the accepted edge (Quotation.convert_to_order.accepted.converted, never the sent shortcut), read back exactly one sales order, name it, and leave the deal alone. The order can't be deleted, so this runs only on the hosted (throwaway) instance or with --allow-permanent; clean-up labels it 'T6 TEST - not an order'.",
+      "argv": ["The customer has accepted quotation {quotation_number} on deal {deal_title}. Make the sales order."],
+      "requires_llm": true,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "open_deal_sent_quote",
+      "extra_writes": ["Quotation.accept.", "Quotation.convert_to_order.accepted."],
+      "expect": {"sections": {"accept_quote": "ordered"}},
+      "verifiers": [
+        {"name": "quote_ordered", "params": {"tools": ["Quotation.accept.sent.accepted",
+                                                       "Quotation.convert_to_order.accepted.converted"]}}
+      ]
+    },
+    {
       "id": "refuse_order_from_sent_quote",
       "description": "Lifecycle step skipped, and the platform would allow it: the harness puts a quotation on its own open deal (at list price, set-up only) and sends it, so it is sent but never accepted. The user asks for it to become a sales order now. Quotation.convert_to_order.sent.converted is live, so only the agent stops the order: a quotation must be accepted first. It must refuse, make no Quotation, SalesOrder or Deal write, and leave the quotation sent with no sales order made from it.",
       "argv": ["Quotation {quotation_number} on deal {deal_title} has been sent to the customer. Convert it into a sales order now."],
