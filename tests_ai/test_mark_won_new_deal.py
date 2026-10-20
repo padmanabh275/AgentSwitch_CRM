@@ -121,3 +121,24 @@ def test_task_is_registered_and_valid():
     task = next(t for t in tasks if t["id"] == "refuse_mark_won_new_deal")
     verifiers.validate_task(task)
     assert "deal_state:{deal_id}" in verifiers.observations_for(task)
+
+
+def test_new_deal_fixture_closes_the_deal_when_the_read_back_fails():
+    # Live 2026-10-20: the read after Lead.make.Deal timed out and the
+    # half-built deal was left open in the shared book.
+    from transport.mcp_client import TRANSIENT, MCPToolError
+
+    class FlakyRead(Platform):
+        failed = False
+
+        def call(self, tool, args=None):
+            if tool == "Deal.get" and not self.failed:
+                self.failed = True
+                self.calls.append((tool, args or {}))
+                raise MCPToolError("Deal.get: The read operation timed out", code=TRANSIENT)
+            return super().call(tool, args)
+
+    p = FlakyRead()
+    with pytest.raises(MCPToolError, match="timed out"):
+        fixtures.create(p, "new_deal", "r1")
+    assert "Deal.mark_lost.new.closed_lost" in tools(p)

@@ -201,10 +201,13 @@ def _new_deal(client, party: dict, run_id: str) -> dict:
     deal = _unwrap(made)
     if "id" not in deal:
         raise RuntimeError(f"fixture: Lead.make.Deal returned no deal id: keys {sorted(made)}")
-    deal = client.call("Deal.get", {"id": deal["id"]})
-    if deal.get("stage") != "new":
+    try:
+        deal = client.call("Deal.get", {"id": deal["id"]})
+        if deal.get("stage") != "new":
+            raise RuntimeError(f"fixture: deal {deal['id']} is {deal.get('stage')!r}, not new")
+    except Exception:
         _mark_lost(client, deal["id"])   # don't leave a half-built open deal behind
-        raise RuntimeError(f"fixture: deal {deal['id']} is {deal.get('stage')!r}, not new")
+        raise
     return {"kind": "new_deal", "created_at": time.time(),
             "deal_id": deal["id"], "deal_title": title, "deal_stage": deal["stage"],
             "deal_updated_at": deal.get("updated_at"), "lead_id": lead["id"],
