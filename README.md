@@ -38,7 +38,8 @@ reproducible path for grading.
 | `--deal DEAL_ID` | Make the quote a Quotation on that deal: drafted at the BOM price, read back, then sent (`domain/quotations.py`). The deal is re-read just before the write; if it closed meanwhile, nothing is written and the quotation is refused. |
 | `--advance DEAL`, `--to-stage STAGE` | Move that deal (id or exact title) one stage forward: new → qualification → proposal → negotiation, with the one transition tool for that step, then read it back (`domain/deal_stage.py`). `--to-stage` must be the next stage: skipping, going back, a closed deal and anything past negotiation (won/lost stays a person's decision) are refused with no write. In free text: "move deal X to proposal". |
 | `--advance-lead LEAD_ID`, `--to-status STATUS` | Move that lead one step forward: new → contacted → qualified → converted (`domain/lead_stage.py`). Converting uses `Lead.convert`, which creates the lead's deal itself; a lead that already has a deal is refused, since converting it would make a second one. Skips, going back, closed leads and disqualifying are refused with no write. In free text: "convert lead X into a deal". |
-| `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three, or none with `--advance`/`--advance-lead`). |
+| `--order-quote QUOTATION`, `--customer-accepted` | Turn that quotation (number or id) into a sales order (`domain/quote_order.py`): an accepted one is converted with `convert_to_order.accepted`; a sent one is accepted first, only with `--customer-accepted`. Never the sent → converted shortcut, and the deal is left as it is (won/lost is a person's decision). Refused with no write: draft, pending approval, declined, already converted or ordered, a closed deal, or a sent quote the customer hasn't accepted. In free text: "the customer accepted QTN-…, make the order"; "accepted" must be in the user's words. |
+| `--asks a,b,c` | Subset of `closing_this_month,at_risk,quote` (default: all three, or none with `--advance`/`--advance-lead`/`--order-quote`). |
 | `--today YYYY-MM-DD` | Pin the date "this month" and "overdue" are judged against. Deal data is still live. |
 | `--dry-run` | Read live data, **write nothing**: no session, escalation or memory. |
 | `--chat "question"` | Straight to the LLM tool loop, skipping classification. |
@@ -213,6 +214,7 @@ the agent's prose, and every run written to disk before anything is scored.
 cd agent
 uv run python -m harness.runner                 # all tasks, every run --dry-run
 uv run python -m harness.runner --tasks at_risk,quote_no_bom --skip-llm
+uv run python -m harness.runner --write --allow-permanent --tasks order_from_accepted_quote   # makes a sales order the seat can't delete
 uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
 ```
 
