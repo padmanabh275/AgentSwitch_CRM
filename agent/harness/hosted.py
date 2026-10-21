@@ -14,14 +14,19 @@ that never ran are listed as failed with that reason. The full evidence
 
 Time: each agent run is killed after --task-timeout seconds, and the batch
 stops starting tasks when --budget-minutes is nearly used up (the rest are
-failed as "time budget exhausted"). Keep the budget a few minutes under the
-toml's timeout_minutes. A spent *token* budget (HTTP 429 budget_exhausted)
+failed as "time budget exhausted"). The toml's timeout_minutes is one clock
+shared by all instances: the first instance writes its start time to
+hosted_clock.json beside the results file, and each later one stops at
+start + --total-minutes. Keep --total-minutes a few minutes under
+timeout_minutes. Tasks
+marked hosted_repeat_of in tasks.json are left out unless named with --tasks. A spent *token* budget (HTTP 429 budget_exhausted)
 also stops the batch: the rest are skipped with that reason and the summary
 says so. SIGTERM is turned into a recorded crash.
 
 Usage (from agent/):
     python -m harness.hosted [--tasks id,id] [--write] [--out PATH]
                              [--task-timeout S] [--budget-minutes M]
+                             [--total-minutes M]
 """
 from __future__ import annotations
 
@@ -35,14 +40,23 @@ from pathlib import Path
 
 from config import REPO_DIR, load_env
 from harness import fixtures, runner, score
-from harness.run_record import write_json
+from harness.run_record import read_json, write_json
 from harness.verifiers import IST
 from transport.mcp_client import client_from_env
 
 RESULTS_PATH = REPO_DIR / "results.json"
-# A full 13-task batch takes 6-8 min; the slowest task on record took 50s.
+# Beside the results file: when the first instance started, so later ones
+# share its clock (see shared_deadline).
+CLOCK_NAME = "hosted_clock.json"
+# The platform's timeout_minutes is one clock for install plus every instance
+# in turn. A 25-task write batch took 14 min on suryodaya (~8 min agent, ~6
+# min fixtures and scoring); the 16 left after omit_repeats take ~9. The
+# per-instance budget keeps the first instance from starving the second; the
+# total is the shared clock, a few minutes under timeout_minutes.
+# The slowest task on record took 57s.
 TASK_TIMEOUT_S = 180
-BUDGET_MINUTES = 20
+BUDGET_MINUTES = 13.5
+TOTAL_MINUTES = 27
 EVIDENCE_CHARS = 500
 TITLE_CHARS = 200
 NOT_RUN = "not run: the harness stopped before reaching this task (timeout or crash)"
@@ -66,6 +80,32 @@ def omit_blocked_priced_tasks(tasks: list[dict], priced_available: bool) -> list
     if priced_available:
         return tasks
     return [t for t in tasks if t.get("fixture") != "open_deal_priced_item"]
+
+
+def shared_deadline(clock_path: Path, instance: str, total_minutes: float,
+                    now: float) -> float:
+    """Wall-clock (epoch) deadline for the whole submission. The first instance
+    writes its start time to clock_path; a later instance of the same
+    submission counts from it. A clock that is unreadable, older than
+    total_minutes, or already lists this instance is from an earlier
+    submission (or a local run), so this run starts a new one."""
+    try:
+        clock = read_json(clock_path)
+        started = float(clock["started"])
+        seen = list(clock["instances"])
+    except (OSError, ValueError, KeyError, TypeError):
+        started, seen = now, []
+    if not 0 <= now - started < total_minutes * 60 or instance in seen:
+        started, seen = now, []
+    write_json(clock_path, {"started": started, "instances": [*seen, instance]})
+    return started + total_minutes * 60
+
+
+def omit_repeats(tasks: list[dict]) -> list[dict]:
+    """Tasks marked hosted_repeat_of cover the same behaviour as the task they
+    name; the hosted run leaves them out to fit two instances in the timeout.
+    An explicit --tasks list is not passed through here."""
+    return [t for t in tasks if not t.get("hosted_repeat_of")]
 
 
 def check_score(task_score: dict) -> float:
@@ -131,11 +171,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--task-timeout", type=float, default=TASK_TIMEOUT_S,
                     help=f"seconds before one agent run is killed (default {TASK_TIMEOUT_S})")
     ap.add_argument("--budget-minutes", type=float, default=BUDGET_MINUTES,
-                    help=f"stop starting tasks once this is nearly used (default {BUDGET_MINUTES})")
+                    help=f"per instance: stop starting tasks once this is nearly used "
+                         f"(default {BUDGET_MINUTES})")
+    ap.add_argument("--total-minutes", type=float, default=TOTAL_MINUTES,
+                    help=f"whole submission, shared by all instances through {CLOCK_NAME} "
+                         f"beside --out (default {TOTAL_MINUTES})")
     args = ap.parse_args(argv)
-    deadline = time.monotonic() + args.budget_minutes * 60
-
     instance = os.environ.get("AGENTSWITCH_INSTANCE") or "local"
+    total_left_s = shared_deadline(args.out.parent / CLOCK_NAME, instance,
+                                   args.total_minutes, time.time()) - time.time()
+    deadline = time.monotonic() + min(args.budget_minutes * 60, total_left_s)
     mode = "write" if args.write else "dry run"
     tasks: list[dict] = []
     entries: dict[str, dict] = {}
@@ -159,11 +204,14 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("terminated by SIGTERM (platform timeout?)")
 
     signal.signal(signal.SIGTERM, on_sigterm)
-    print(f"[hosted] instance {instance}, {mode}, budget {args.budget_minutes:g} min, "
+    print(f"[hosted] instance {instance}, {mode}, budget {args.budget_minutes:g} min "
+          f"({total_left_s / 60:.1f} of {args.total_minutes:g} min left on the shared clock), "
           f"task timeout {args.task_timeout:g}s, results -> {args.out}", flush=True)
     try:
         data = runner.load_tasks()
         tasks = runner.select_tasks(data, args.tasks)
+        if not args.tasks:
+            tasks = omit_repeats(tasks)
         if not args.write and not args.tasks:
             # Write tasks can't pass a dry run; listing them would only add
             # failures to results.json. Name one with --tasks to see it skipped.

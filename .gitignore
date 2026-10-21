@@ -8,3 +8,4 @@ runs/
 
 # hosted harness run output
 results.json
+hosted_clock.json

@@ -93,6 +93,14 @@ def test_omit_blocked_priced_tasks_drops_only_those():
     assert hosted.omit_blocked_priced_tasks(tasks, True) == tasks
 
 
+
+def test_omit_repeats_keeps_the_task_each_repeat_names():
+    tasks = json.loads(runner.TASKS_PATH.read_text())["tasks"]
+    kept = {t["id"] for t in hosted.omit_repeats(tasks)}
+    repeats = [t for t in tasks if t.get("hosted_repeat_of")]
+    assert repeats and not kept & {t["id"] for t in repeats}
+    assert {t["hosted_repeat_of"] for t in repeats} <= kept
+
 def test_scrub_removes_an_evaluator_token(monkeypatch):
     monkeypatch.setenv("AGENTSWITCH_TOKEN", "super-secret-token-value")
     leaked = {"status": "fail", "checks": [check("fail", detail="saw super-secret-token-value")]}

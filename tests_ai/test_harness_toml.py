@@ -41,8 +41,11 @@ def test_run_needs_no_shell_and_its_file_exists():
 
 
 def test_budget_leaves_margin_under_the_timeout():
+    # timeout_minutes is one clock for every instance; the total is that clock.
     budget = float(run_flag("--budget-minutes") or hosted.BUDGET_MINUTES)
-    assert budget <= TOML["timeout_minutes"] - 3
+    total = float(run_flag("--total-minutes") or hosted.TOTAL_MINUTES)
+    assert total <= TOML["timeout_minutes"] - 3
+    assert budget < total
 
 
 def test_results_path_is_where_hosted_writes():
