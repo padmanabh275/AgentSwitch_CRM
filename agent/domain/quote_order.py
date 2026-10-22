@@ -9,7 +9,8 @@ Probed live 2026-10-21 (T6-harness-probe quotes on our own deals):
   converted, and either way a second call makes no second order.
 - Since Release 13 (N483, was drafts/BUG10) converting links the order to
   the quotation's deal (SalesOrder.deal_id) and the platform marks that
-  deal closed_won itself. Before it, the order had no deal field and the
+  deal closed_won itself, except a deal whose value is 0: that one stays
+  open with no error (live 2026-10-22; mark_won says "Set a value first"). Before it, the order had no deal field and the
   deal stayed open. The seat can't delete or cancel an order.
 
 So this agent makes the order only when the customer accepted:
@@ -20,7 +21,10 @@ So this agent makes the order only when the customer accepted:
   (convert_to_order.sent.converted); this agent never uses that edge;
 - anything else is refused: draft, pending approval, declined, expired,
   cancelled, already converted, an order already made from it, or a deal
-  that is closed.
+  that is closed;
+- a quotation with unpriced lines (unpriced_line_count > 0) is refused
+  whatever its status: since Release 13 (N480) it is priced at margin
+  approval first, and the platform won't send, accept or convert it.
 
 This agent never calls Deal.mark_won: the platform's conversion wins the
 deal, and the deal is read back afterwards so the answer says what it is
@@ -46,7 +50,8 @@ from transport.mcp_client import INVALID_TRANSITION, NOT_FOUND, MCPClient, MCPTo
 ACCEPT_TOOL = "Quotation.accept.{status}.accepted"
 CONVERT_TOOL = "Quotation.convert_to_order.accepted.converted"
 ACCEPTABLE = ("sent", "viewed")
-QUOTE_FIELDS = ("id", "number", "status", "deal_id", "party_id", "net_total", "grand_total", "updated_at")
+QUOTE_FIELDS = ("id", "number", "status", "deal_id", "party_id", "net_total", "grand_total", "updated_at",
+                "unpriced_line_count")
 ORDER_FIELDS = ("id", "number", "status", "quotation_id", "deal_id", "party_id", "net_total",
                 "grand_total")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -140,6 +145,11 @@ def accept_quote(client: MCPClient, quotation_ref: str, customer_accepted: bool 
     label = q.get("number") or q["id"]
     base.update(quotation_id=q["id"], number=q.get("number"), status_before=q["status"],
                 deal_id=q.get("deal_id"))
+    unpriced = q.get("unpriced_line_count") or 0
+    if unpriced:
+        return {**base, "outcome": "refused", "unpriced_line_count": unpriced,
+                "reason": f"no order was made from quotation {label}: it has {unpriced} unpriced "
+                          "line(s), which are priced at margin approval before it can be sent or ordered"}
     steps, why = plan(q["status"], customer_accepted)
     if steps is None:
         return {**base, "outcome": "refused", "reason": f"no order was made from quotation {label}: {why}"}
@@ -208,7 +218,10 @@ def accept_quote(client: MCPClient, quotation_ref: str, customer_accepted: bool 
         deal = client.call("Deal.get", {"id": q["deal_id"]})
         stage = deal.get("stage")
         out.update(deal_stage_after=stage)
+        zero = stage != "closed_won" and not deal.get("value")
         out["reason"] += (f"; the platform marked deal {deal.get('title')!r} {stage} when the order was made"
                           if stage == "closed_won" else
-                          f"; deal {deal.get('title')!r} is still {stage} (this agent doesn't mark deals won)")
+                          f"; deal {deal.get('title')!r} is still {stage} (this agent doesn't mark deals won"
+                          + ("; its value is 0, and the platform won't mark a deal won without a value)"
+                             if zero else ")"))
     return out

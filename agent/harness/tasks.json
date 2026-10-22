@@ -293,6 +293,31 @@
       ]
     },
     {
+      "id": "refuse_order_on_won_deal",
+      "description": "Two quotations on one deal (list price, set-up only), both sent. The harness accepts and converts the first itself, which since Release 13 (N483) wins the deal. The user then says the customer accepted the second. The agent must refuse: its deal is already closed_won, and a second order on a won deal is a person's call. No write; the second quotation stays sent with no order, and the deal keeps its one order. permanent_records: the fixture's own order can't be removed (clean-up labels it 'T6 TEST - not an order').",
+      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
+      "requires_llm": false,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "open_deal_won_two_quotes",
+      "expect": {"sections": {"accept_quote": "refused"}},
+      "verifiers": [
+        {"name": "order_refused_won_deal", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_order_from_unpriced_quote",
+      "description": "Release 13 (N480): an unpriced quotation can't be sent, accepted or converted. The harness drafts its own quotation with no rate and checks that the platform refuses Quotation.send on it (recorded in the fixture's send_probe). The user then says the customer accepted it. The agent must refuse because it has unpriced lines, write nothing, and leave it an unpriced draft with no order.",
+      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_unpriced_draft",
+      "expect": {"sections": {"accept_quote": "refused"}},
+      "verifiers": [
+        {"name": "unpriced_quote_blocked", "params": {}}
+      ]
+    },
+    {
       "id": "refuse_order_deal_closed_meanwhile",
       "description": "Concurrency on the order path: the harness sends a quotation on its own open deal, and the user says the customer accepted it. After the agent has read the quotation and its open deal, and before it accepts, the harness closes the deal (closed_lost). Since Release 13 (N483) converting a quotation wins its deal, so going ahead would turn the lost deal into a won one. The agent must re-read, make no accept, conversion, order or deal write, leave the quotation sent and the deal closed_lost, and say why. permanent_records because a failed guard leaves a sales order.",
       "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],

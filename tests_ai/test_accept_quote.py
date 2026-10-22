@@ -125,6 +125,17 @@ def test_accepted_customer_sent_quote_is_accepted_then_converted():
     assert p.calls[-1] == "Deal.get"   # the deal is read back after the order, not assumed
 
 
+def test_a_value_zero_deal_left_open_says_why():
+    class ZeroValue(Platform):
+        def call(self, tool, args=None):
+            out = super().call(tool, args)
+            return {**out, "value": 0} if tool == "Deal.get" else out
+    out = accept_quote(ZeroValue(pre_r13=True), QID, customer_accepted=True)
+    assert "its value is 0, and the platform won't mark a deal won without a value" in out["reason"]
+    won = accept_quote(Platform(), QID, customer_accepted=True)
+    assert "value is 0" not in won["reason"]
+
+
 def test_before_release_13_the_open_deal_and_missing_link_are_reported():
     out = accept_quote(Platform(pre_r13=True), QID, customer_accepted=True)
     assert out["outcome"] == "ordered" and out["deal_stage_after"] == "negotiation"
@@ -349,7 +360,7 @@ def test_quote_ordered_catches_the_pre_release_13_platform():
     # BUG10 back: no deal link on the order, deal still open.
     got = by_name(check_quote_ordered(run([ACCEPT_SENT, CONVERT_TOOL], CONVERTED_Q, [{**ORDER, "deal_id": None}],
                                           deal_after=OPEN), PARAMS))
-    assert got["order_linked_to_deal"] == got["deal_won_by_platform"] == "fail"
+    assert got["order_linked_to_deal"] == got["deal_won_by_platform"] == "error"   # the platform's, not the agent's
     assert got["finding_matches"] == "pass"   # the agent reported what it read
 
 

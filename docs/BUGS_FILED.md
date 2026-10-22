@@ -201,10 +201,17 @@ on the hosted copy or locally with `--write`, and have not yet been run live.
 | N480 | `drafts/BUG7` | A quote line may have no rate; submit for margin approval, the approver prices it. An unpriced quote can't be sent, accepted or converted | ✅ `Quotation.create` line requires only `qty` | `write_quote_for_approval` replaces `refuse_unpriced_quote_rate_required`; TO_REVISIT #11 resolved |
 | N481 | `b1a06b93` (`drafts/BUG6`) | Manufacturing cost tools that always 403'd are no longer listed | ✅ no `manufacturing` tool in 234 | same `tools_absent` check |
 | N482 | `drafts/BUG8` | `Lead.convert` on a lead that already has a deal links that deal instead of making a second | write needed | agent converts instead of refusing and checks the deal is the same one; `convert_lead_with_deal` replaces `refuse_convert_lead_with_deal` |
-| N483 | `drafts/BUG10` | Quote → sales order links the order to its deal and marks the deal won | write needed (`SalesOrder.create` schema now has `deal_id`) | agent reads the deal back and reports it won (no longer "left as it is"); `quote_ordered` checks `order_linked_to_deal`, `deal_won_by_platform`, `finding_matches` |
+| N483 | `drafts/BUG10` | Quote → sales order links the order to its deal and marks the deal won | ⚠️ partly. Live 10-22 via `convert_to_order.accepted`: the order is always linked (`deal_id`), but the deal is won **only if its value is non-zero**. A value-0 deal stays at `negotiation` with no error (`Deal.mark_won` on it says "Set a value first"). With a value set, the platform won it (batch `20261022T171147`) | agent reads the deal back and reports its stage, and says why when a value-0 deal stays open; `quote_ordered`'s platform checks report `error`, not `fail`; quote fixtures now give their deal a value |
 | N484 | `drafts/BUG9`, `drafts/BUG11` | Errors name only steps the seat can take; wrong-state errors carry `invalid_transition` | ✅ draft → accept/decline offers only "Submit for Margin Approval; Send" (no Cancel/Expire), code `invalid_transition` | none needed |
 | N485 | — | `skill.export` with no selector → `invalid_arguments` naming the fields | ✅ `endpoint.agent.skill.export {}` → `invalid_arguments`, field `/`: "Provide one of: skill_id, persona_id, persona_name." | none (agent doesn't use it) |
 | N487 | `01f3201b` (D6) | Provider filters accept the older provider names | ✅ enum now has `claude`/`anthropic`, `gemini`/`google`, … | none (agent doesn't use it) |
+
+**Possible follow-up for the instructor (not filed):** N483's silent skip. Converting a quotation on
+a deal with value 0 makes a linked order but leaves the deal open, with no error or warning on the
+conversion. Our BUG10 probe deal was value 0, so as filed the report would still reproduce. Either the
+conversion should set the deal's value from the order, or it should say why the deal wasn't won. Evidence:
+SO-2026-00242 on deal `ff2256d0` (value 0, stayed `negotiation`, batch `20261022T170441`) vs SO-2026-00244
+(value set, `closed_won`, batch `20261022T171147`).
 
 Seen while checking: `Quotation.make.SalesOrder` on an already-converted quotation returns the
 existing order (our test order SO-2026-00241) instead of refusing, so a repeat call is idempotent
