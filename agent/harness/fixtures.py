@@ -34,6 +34,27 @@ Kinds (task field "fixture"):
                           must not put a second one in the approver's queue.
                           Clean-up revises it back to draft like the
                           agent's own.
+  open_deal_won_two_quotes two quotations on one deal, both at the item's list
+                          price (set-up only) and both sent. The harness
+                          accepts and converts the first itself; Release 13
+                          (N483) says that wins the deal. A deal at value 0
+                          can't be won, so every quote kind's deal is given
+                          the quotes' list total first (live 2026-10-22, a
+                          value-0 deal stayed at negotiation). If the deal
+                          still isn't won the harness marks it won itself
+                          (won_by records which). The
+                          second quote stays sent; the agent is asked to
+                          order it and must refuse, since its deal is won.
+                          Leaves a permanent order (labelled like the
+                          agent's).
+  open_deal_unpriced_draft the unpriced kind, plus the harness's own
+                          Quotation for the item with no rate, left a
+                          draft. The harness then tries Quotation.send on
+                          it: since Release 13 (N480) an unpriced quote
+                          can't be sent, and the refusal is recorded in
+                          `send_probe`. If the send lands, the quote is
+                          declined at once and the fixture fails (the
+                          agent must never see a sent unpriced quote).
   new_lead                a Lead at `new`, nothing else: no contact, no
                           qualify, no deal. The stage-skipping shortcuts
                           (Lead.convert.new.*, Lead.qualify.new.*) were
@@ -90,10 +111,12 @@ from harness.batch_client import memo
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_pending_quote",
-                 "open_deal_draft_quote",
+                 "open_deal_unpriced_draft", "open_deal_won_two_quotes", "open_deal_draft_quote",
                  "open_deal_sent_quote", "new_lead", "qualified_lead", "qualified_lead_with_deal",
                  "new_deal")
-QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote")
+QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote", "open_deal_won_two_quotes")
+# Kinds whose fixture quotation is still `sent` after the run: declined by retire().
+SENT_KINDS = ("open_deal_sent_quote", "open_deal_won_two_quotes")
 LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal")
 OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
 INTERFERENCE_GATES = {"close_deal_before_write": "before_quotation_write",
@@ -230,9 +253,19 @@ def create(client, kind: str, run_id: str) -> dict:
         deal = _read(client, "Deal.get", {"id": deal["id"]})
         if deal.get("stage") != "negotiation":
             raise RuntimeError(f"fixture: deal {deal['id']} ended at {deal.get('stage')!r}, not negotiation")
+        if draft_quote:
+            # A deal can't be won at value 0 ("Set a value first", live 2026-10-22), and
+            # the conversion's win (N483) is skipped the same way: give it the quotes' total.
+            client.call("Deal.update", {"id": deal["id"],
+                                        "value": round(float(item["default_rate"]) * FIXTURE_QTY, 2)})
+            deal = _read(client, "Deal.get", {"id": deal["id"]})
         quote = _draft_quote(client, deal, item, title) if draft_quote else {}
         if kind == "open_deal_pending_quote":
             quote = _pending_quote(client, deal, item, title)
+        if kind == "open_deal_unpriced_draft":
+            quote = _unpriced_draft(client, deal, item, title)
+        if kind == "open_deal_won_two_quotes":
+            quote = _won_by_first_quote(client, deal, item, title, quote)
         if kind == "open_deal_sent_quote":
             quote = _send_quote(client, quote)
     except Exception:
@@ -346,22 +379,73 @@ def _draft_quote(client, deal: dict, item: dict, title: str) -> dict:
             "quotation_status": row["status"], "quotation_updated_at": row.get("updated_at")}
 
 
-def _pending_quote(client, deal: dict, item: dict, title: str) -> dict:
-    """An unpriced Quotation on the fixture deal (no rate on the line), moved
-    draft -> pending_approval and read back."""
+def _unpriced_create(client, deal: dict, item: dict, title: str, what: str) -> str:
     created = _unwrap(client.call("Quotation.create", {
         "party_id": deal["party_id"], "company_id": deal["company_id"], "deal_id": deal["id"],
         "items": [{"item_id": item["id"], "qty": FIXTURE_QTY,
                    "description": "harness fixture line, no rate (priced at margin approval)"}],
-        "notes": f"{title}: harness fixture, an unpriced quotation waiting for margin approval; "
-                 "not an offer"}))
-    client.call("Quotation.submit_for_margin_approval.draft.pending_approval", {"id": created["id"]})
-    row = _unwrap(_read(client, "Quotation.get", {"id": created["id"]}))
+        "notes": f"{title}: harness fixture, {what}; not an offer"}))
+    return created["id"]
+
+
+def _pending_quote(client, deal: dict, item: dict, title: str) -> dict:
+    """An unpriced Quotation on the fixture deal (no rate on the line), moved
+    draft -> pending_approval and read back."""
+    qid = _unpriced_create(client, deal, item, title, "an unpriced quotation waiting for margin approval")
+    client.call("Quotation.submit_for_margin_approval.draft.pending_approval", {"id": qid})
+    row = _unwrap(_read(client, "Quotation.get", {"id": qid}))
     if row.get("status") != "pending_approval":
         raise RuntimeError(f"fixture: quotation {row.get('id')} is {row.get('status')!r} after "
                            "submit_for_margin_approval, not pending_approval")
     return {"quotation_id": row["id"], "quotation_number": row.get("number"),
             "quotation_status": row["status"], "quotation_updated_at": row.get("updated_at")}
+
+
+def _unpriced_draft(client, deal: dict, item: dict, title: str) -> dict:
+    """An unpriced draft, then a Quotation.send the platform must refuse."""
+    qid = _unpriced_create(client, deal, item, title, "an unpriced draft quotation")
+    probe: dict = {"tool": "Quotation.send"}
+    try:
+        client.call("Quotation.send", {"id": qid})
+        probe["refused"] = False
+    except MCPToolError as e:
+        probe.update(refused=True, code=e.code, message=str(e)[:300])
+    row = _unwrap(_read(client, "Quotation.get", {"id": qid}))
+    probe["status_after"] = row.get("status")
+    if not probe["refused"] or row.get("status") != "draft":
+        if row.get("status") == "sent":
+            client.call("Quotation.decline.sent.declined", {"id": qid})
+        raise RuntimeError(f"fixture: the platform sent unpriced quotation {row.get('number')} "
+                           f"(status {row.get('status')!r}); N480 says it can't be sent")
+    return {"quotation_id": qid, "quotation_number": row.get("number"), "quotation_status": "draft",
+            "quotation_updated_at": row.get("updated_at"),
+            "unpriced_line_count": row.get("unpriced_line_count"), "send_probe": probe}
+
+
+def _won_by_first_quote(client, deal: dict, item: dict, title: str, first: dict) -> dict:
+    """Send `first` and a second quote, then accept and convert `first`:
+    the deal is won (N483) and the second quote is left sent."""
+    first = _send_quote(client, first)
+    second = _send_quote(client, _draft_quote(client, deal, item, title))
+    client.call("Quotation.accept.sent.accepted", {"id": first["quotation_id"]})
+    client.call("Quotation.convert_to_order.accepted.converted", {"id": first["quotation_id"]})
+    try:
+        after = _read(client, "Deal.get", {"id": deal["id"]})
+        won_by = "platform" if after.get("stage") == "closed_won" else "harness"
+        if won_by == "harness":   # N483 didn't win it: the agent's guard is tested all the same
+            client.call(f"Deal.mark_won.{after.get('stage')}.closed_won", {"id": deal["id"]})
+            after = _read(client, "Deal.get", {"id": deal["id"]})
+        if after.get("stage") != "closed_won":
+            raise RuntimeError(f"fixture: deal {deal['id']} is {after.get('stage')!r}, not closed_won")
+    except Exception:
+        # create()'s handler only closes the deal: label the order and decline
+        # the second quote here, so a failed fixture leaves nothing open.
+        _label_orders(client, first["quotation_id"])
+        _decline_sent(client, second["quotation_id"])
+        raise
+    return {**second, "first_quotation_id": first["quotation_id"],
+            "first_quotation_number": first["quotation_number"], "deal_stage_won": after.get("stage"),
+            "won_by": won_by}
 
 
 def _send_quote(client, quote: dict) -> dict:
@@ -463,10 +547,11 @@ def retire(client, fixture: dict) -> dict:
         return out
     if fixture.get("kind") in QUOTE_KINDS and fixture.get("quotation_id"):
         try:
-            out["labelled_orders"] = _label_orders(client, fixture["quotation_id"])
+            out["labelled_orders"] = [o for key in ("first_quotation_id", "quotation_id")
+                                      if fixture.get(key) for o in _label_orders(client, fixture[key])]
         except Exception as e:
             out["label_error"] = f"{type(e).__name__}: {e}"[:300]
-    if fixture.get("kind") == "open_deal_sent_quote" and fixture.get("quotation_id"):
+    if fixture.get("kind") in SENT_KINDS and fixture.get("quotation_id"):
         try:
             out["declined"] = _decline_sent(client, fixture["quotation_id"])
         except Exception as e:

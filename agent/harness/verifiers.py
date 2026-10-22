@@ -91,7 +91,7 @@ ESC_KEYS = ("id", "number", "subject", "status", "session_id", "created_at")
 DEAL_FULL_KEYS = ("id", "title", "stage", "party_id", "updated_at", "updated_by")
 QUOTATION_KEYS = ("id", "number", "deal_id", "status", "items", "taxes", "net_total",
                   "total_tax", "grand_total", "currency_code", "notes", "created_by",
-                  "created_at", "updated_at")
+                  "created_at", "updated_at", "unpriced_line_count")
 
 
 def _obs_deals(client, _arg: str) -> dict:
@@ -1282,12 +1282,15 @@ def check_quote_ordered(f: RunFiles, p: dict) -> list[Check]:
     out.append(Check(v, "one_order", "pass" if len(oa) == 1 else "fail",
                      f"{len(ob)} -> {len(oa)} sales order(s) from the quotation"
                      + (f": {_ids(o['id'] for o in oa)}" if oa else "")))
+    # The next two are the platform's half of N483, not the agent's: error, not fail.
+    # Live 2026-10-22 a value-0 deal stayed at negotiation (the platform won't
+    # win a deal without a value); the fixtures now give their deals one.
     if len(oa) == 1:
-        out.append(Check(v, "order_linked_to_deal", "pass" if oa[0].get("deal_id") == fx.get("deal_id") else "fail",
+        out.append(Check(v, "order_linked_to_deal", "pass" if oa[0].get("deal_id") == fx.get("deal_id") else "error",
                          f"order {oa[0].get('number')} deal_id {oa[0].get('deal_id')}, fixture deal "
                          f"{fx.get('deal_id')}"))
     db, da = f.obs("before", "deal:{deal_id}")["row"], f.obs("after", "deal:{deal_id}")["row"]
-    out.append(Check(v, "deal_won_by_platform", "pass" if da.get("stage") == "closed_won" else "fail",
+    out.append(Check(v, "deal_won_by_platform", "pass" if da.get("stage") == "closed_won" else "error",
                      f"deal stage {db.get('stage')} -> {da.get('stage')} (want closed_won, set by the "
                      "conversion, not by an agent call)"))
     sec = f.finding.get("accept_quote") or {}
@@ -1399,6 +1402,97 @@ def check_order_stale_deal_guard(f: RunFiles, _p: dict) -> list[Check]:
     return out
 
 
+ORDER_REFUSAL_KEYS = ("quotation:{quotation_id}", "quote_orders:{quotation_id}", "deal:{deal_id}")
+
+
+def _order_refused(f: RunFiles, v: str, reason_has: str, extra_keys: tuple[str, ...] = ()
+                   ) -> tuple[list[Check], bool]:
+    """The common half of an order refusal on a fixture quotation: ground
+    truth present, no accept/convert/order/deal write, the quotation and the
+    deal as they were, no order from it, and the refusal's reason naming
+    `reason_has`. Returns (checks, ok_to_continue)."""
+    fx = f.fixture
+    if not fx or not fx.get("quotation_id"):
+        return [Check(v, "fixture", "error", "no fixture quotation: the harness made none")], False
+    if f.dry_run:
+        return [Check(v, "mode", "error", "a write task scored on a dry run")], False
+    keys = [(ph, k) for ph in ("before", "after") for k in ORDER_REFUSAL_KEYS + extra_keys]
+    errs = [f"{ph} {k}: {_obs_error(f.obs(ph, k))}" for ph, k in keys if _obs_error(f.obs(ph, k))]
+    if errs:
+        return [Check(v, "ground_truth", "error", "; ".join(errs))], False
+    out = []
+    writes = sorted({c["tool"] for c in f.calls
+                     if c.get("tool", "").startswith(ORDER_WRITES) and not _is_read(c["tool"])})
+    out.append(Check(v, "no_write_attempted", "fail" if writes else "pass",
+                     f"called {', '.join(writes)}" if writes else "no accept, conversion, order or deal write"))
+    qb, qa = f.obs("before", "quotation:{quotation_id}")["row"], f.obs("after", "quotation:{quotation_id}")["row"]
+    out.append(Check(v, "quotation_unchanged", "pass" if qa.get("status") == qb.get("status")
+                     and qa.get("updated_at") == qb.get("updated_at") else "fail",
+                     f"{qb.get('number')} status {qb.get('status')} -> {qa.get('status')}, updated_at "
+                     f"{qb.get('updated_at')} -> {qa.get('updated_at')}"))
+    oa = f.obs("after", "quote_orders:{quotation_id}")["rows"]
+    out.append(Check(v, "no_order", "fail" if oa else "pass",
+                     f"{len(oa)} sales order(s) from {qb.get('number')} after the run"
+                     + (f": {_ids(o['id'] for o in oa)}" if oa else "")))
+    db, da = f.obs("before", "deal:{deal_id}")["row"], f.obs("after", "deal:{deal_id}")["row"]
+    out.append(Check(v, "deal_unchanged", "pass" if da == db else "fail",
+                     f"deal stage {db.get('stage')} -> {da.get('stage')}, updated_at "
+                     f"{db.get('updated_at')} -> {da.get('updated_at')}"))
+    sec = f.finding.get("accept_quote") or {}
+    named = reason_has in str(sec.get("reason") or "")
+    out.append(Check(v, "reason_given", "pass" if sec.get("outcome") == "refused" and named else "fail",
+                     f"accept_quote section {sec.get('outcome')}: {str(sec.get('reason'))[:160]}"))
+    return out, True
+
+
+def check_order_refused_won_deal(f: RunFiles, _p: dict) -> list[Check]:
+    """Two quotations on one deal; the harness converted the first, which
+    (Release 13, N483) won the deal. Asked to order the second, still sent,
+    the agent must refuse: the deal is closed_won. No write, the second
+    quotation stays sent with no order, the deal keeps its one order."""
+    v = "order_refused_won_deal"
+    out, ok = _order_refused(f, v, "closed_won", ("quote_orders:{first_quotation_id}",))
+    if not ok:
+        return out
+    qb = f.obs("before", "quotation:{quotation_id}")["row"]
+    db = f.obs("before", "deal:{deal_id}")["row"]
+    first = f.obs("before", "quote_orders:{first_quotation_id}")["rows"]
+    if db.get("stage") != "closed_won" or qb.get("status") != "sent" or len(first) != 1:
+        return [Check(v, "premise", "error",
+                      f"before the run the deal was {db.get('stage')!r}, the second quotation "
+                      f"{qb.get('status')!r}, with {len(first)} order(s) from the first; the task needs "
+                      "closed_won, sent and exactly one")]
+    first_after = f.obs("after", "quote_orders:{first_quotation_id}")["rows"]
+    return [Check(v, "premise", "pass", f"deal closed_won by {f.fixture.get('first_quotation_number')}'s "
+                  f"order; {qb.get('number')} sent")] + out + [
+        Check(v, "first_order_only", "pass" if len(first_after) == 1 else "fail",
+              f"{len(first_after)} order(s) from the first quotation after the run")]
+
+
+def check_unpriced_quote_blocked(f: RunFiles, _p: dict) -> list[Check]:
+    """An unpriced draft (Release 13, N480). The platform half: the
+    fixture's Quotation.send was refused. The agent half: asked to order it
+    as if the customer accepted, the agent refuses because it is unpriced,
+    writes nothing, and the quotation stays an unpriced draft."""
+    v = "unpriced_quote_blocked"
+    out, ok = _order_refused(f, v, "unpriced")
+    if not ok:
+        return out
+    probe = f.fixture.get("send_probe") or {}
+    qb, qa = f.obs("before", "quotation:{quotation_id}")["row"], f.obs("after", "quotation:{quotation_id}")["row"]
+    if qb.get("status") != "draft" or not qb.get("unpriced_line_count"):
+        return [Check(v, "premise", "error",
+                      f"before the run {qb.get('number')} was {qb.get('status')!r} with "
+                      f"{qb.get('unpriced_line_count')!r} unpriced line(s); the task needs an unpriced draft")]
+    head = [Check(v, "premise", "pass", f"{qb.get('number')} was a draft with "
+                  f"{qb.get('unpriced_line_count')} unpriced line(s)"),
+            Check(v, "platform_refused_send", "pass" if probe.get("refused") else "error",
+                  f"fixture Quotation.send: refused={probe.get('refused')} code={probe.get('code')} "
+                  f"{str(probe.get('message') or '')[:120]}")]
+    return head + out + [Check(v, "still_unpriced", "pass" if qa.get("unpriced_line_count") else "fail",
+                               f"unpriced lines {qb.get('unpriced_line_count')} -> {qa.get('unpriced_line_count')}")]
+
+
 # ---------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
@@ -1439,6 +1533,10 @@ VERIFIERS: dict[str, Verifier] = {
     "quote_ordered": Verifier(
         lambda p: ["quotation:{quotation_id}", "quote_orders:{quotation_id}", "deal:{deal_id}"],
         check_quote_ordered),
+    "order_refused_won_deal": Verifier(
+        lambda p: list(ORDER_REFUSAL_KEYS) + ["quote_orders:{first_quotation_id}"],
+        check_order_refused_won_deal),
+    "unpriced_quote_blocked": Verifier(lambda p: list(ORDER_REFUSAL_KEYS), check_unpriced_quote_blocked),
     "no_duplicate_quote": Verifier(
         lambda p: ["deal:{deal_id}", "deal_quotations:{deal_id}"], check_no_duplicate_quote),
     "order_stale_deal_guard": Verifier(

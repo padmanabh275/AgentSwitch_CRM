@@ -216,6 +216,7 @@ uv run python -m harness.runner                 # all tasks, every run --dry-run
 uv run python -m harness.runner --tasks at_risk,quote_no_bom --skip-llm
 uv run python -m harness.runner --write --allow-permanent --tasks order_from_accepted_quote   # makes a sales order the seat can't delete
 uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
+uv run python -m harness.error_guidance          # do wrong-state errors name only steps we have tools for? (N484)
 ```
 
 **Run, then score, never both at once.** For each task the runner:
