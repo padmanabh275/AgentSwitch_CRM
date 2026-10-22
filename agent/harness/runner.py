@@ -16,6 +16,14 @@ For each task in harness/tasks.json:
   3. read the platform state again
      -> ground_truth_after.json
   4. retire the fixture (a still-open fixture deal is marked lost)
+A task in "steps" (a funnel) runs steps 1-3 once per step instead, each
+agent step as its own run, runs/<run_id>.<n>-<step>, with the step's own
+task.json and fixture.json (the funnel's state so far) so the existing
+verifiers score it. A step's "capture" adds values from its finding to the
+state (the deal a convert made, say); a "harness" step is a person's
+hand-off (fixtures.handoff). The first step that fails stops the funnel.
+The task's own run_dir keeps the order in steps.json, and its own
+verifiers look at the whole chain before the fixture is retired.
 and record the batch in runs/batches/<batch_id>/manifest.json.
 
 Scoring is a separate step over those files (harness/score.py), so a
@@ -170,6 +178,8 @@ def run_task(client, task: dict, run_id: str, today: str, write: bool, run_dir: 
              timeout_s: float) -> dict:
     """Fixture, ground truth before, the agent (with any interference),
     ground truth after, fixture retired. Every step is on disk as it happens."""
+    if task.get("steps"):
+        return run_steps(client, task, run_id, today, write, run_dir, timeout_s)
     write_json(run_dir / "task.json", {**task, "today": today})
     fixture = None
     if task.get("fixture"):
@@ -197,6 +207,89 @@ def run_task(client, task: dict, run_id: str, today: str, write: bool, run_dir: 
     if fixture:
         write_json(run_dir / "fixture.json", {**fixture, "retired": fixtures.retire(client, fixture)})
     return result
+
+
+def _dig(finding: dict, path: str):
+    """finding["a"]["b"] for "a.b", or None."""
+    value = finding
+    for part in path.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
+def _resolvable(keys: list[str], state: dict) -> list[str]:
+    """The observation keys whose placeholders the state can fill yet."""
+    resolved = [verifiers.resolve(k, state) for k in keys]
+    return [k for k in resolved if not verifiers.PLACEHOLDER.search(k)]
+
+
+def run_steps(client, task: dict, run_id: str, today: str, write: bool, run_dir: Path,
+              timeout_s: float) -> dict:
+    """A funnel: one fixture, then each step in order (see the module
+    docstring), all inside timeout_s; the fixture is retired at the end."""
+    t0 = time.time()
+    deadline = time.monotonic() + timeout_s
+    write_json(run_dir / "task.json", {**task, "today": today})
+    state = fixtures.create(client, task["fixture"], run_id)
+    write_json(run_dir / "fixture.json", state)
+    keys = verifiers.observations_for(task)
+    write_json(run_dir / "ground_truth_before.json",
+               verifiers.observe_all(client, _resolvable(keys, state)))
+    log: list[dict] = []
+    stopped = None
+    try:
+        for n, step in enumerate(task["steps"], 1):
+            entry = {"step": step["name"]}
+            if stopped:
+                log.append({**entry, "status": "not_run", "reason": stopped})
+                continue
+            if step.get("harness"):
+                try:
+                    done = fixtures.handoff(client, step["harness"], state)
+                    state.update(done.pop("state", {}))
+                    entry.update(status="done", **done)
+                except Exception as e:
+                    entry.update(status="error", reason=f"{type(e).__name__}: {e}"[:300])
+                    stopped = f"hand-off {step['name']} failed"
+                log.append(entry)
+                write_json(run_dir / "steps.json", log)
+                continue
+            left_s = deadline - time.monotonic()
+            if left_s < min(MIN_AGENT_S, timeout_s):
+                stopped = "time budget exhausted"
+                log.append({**entry, "status": "not_run", "reason": stopped})
+                continue
+            sub_id = f"{run_id}.{n}-{step['name']}"
+            sub_dir = RUNS_DIR / sub_id
+            sub_task = verifiers.step_task(task, step)
+            argv = [verifiers.resolve(a, state) for a in step["argv"]]
+            write_json(sub_dir / "task.json", {**sub_task, "today": today, "argv_resolved": argv})
+            write_json(sub_dir / "fixture.json", state)
+            sub_keys = [verifiers.resolve(k, state) for k in verifiers.observations_for(sub_task)]
+            write_json(sub_dir / "ground_truth_before.json", verifiers.observe_all(client, sub_keys))
+            result = run_agent(sub_task, sub_id, today, write, sub_dir, left_s, argv=argv)
+            write_json(sub_dir / "ground_truth_after.json", verifiers.observe_all(client, sub_keys))
+            entry.update(status="ran", run_id=sub_id, run_dir=str(sub_dir), **result)
+            taskrun = read_json(sub_dir / "taskrun.json") if (sub_dir / "taskrun.json").exists() else {}
+            captured = {k: _dig(taskrun.get("finding") or {}, path)
+                        for k, path in (step.get("capture") or {}).items()}
+            entry["captured"] = captured
+            missing = sorted(k for k, v in captured.items() if v is None)
+            if result["exit_code"] != 0:
+                stopped = f"step {step['name']} exited {result['exit_code']}"
+            elif missing:
+                stopped = f"step {step['name']}'s finding has no {', '.join(missing)}"
+            state.update({k: v for k, v in captured.items() if v is not None})
+            log.append(entry)
+            write_json(run_dir / "steps.json", log)
+            write_json(run_dir / "fixture.json", state)
+    finally:
+        write_json(run_dir / "steps.json", log)
+        write_json(run_dir / "ground_truth_after.json",
+                   verifiers.observe_all(client, _resolvable(keys, state)))
+        write_json(run_dir / "fixture.json", {**state, "retired": fixtures.retire(client, state)})
+    return {"exit_code": 1 if stopped else 0, "seconds": round(time.time() - t0, 2),
+            "steps": len(log), **({"stopped": stopped} if stopped else {})}
 
 
 def select_tasks(data: dict, task_ids: str | None) -> list[dict]:

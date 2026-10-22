@@ -26,6 +26,10 @@ Kinds (task field "fixture"):
                           sent; it takes only the id). The platform still
                           offers convert_to_order.sent.converted, so only
                           the agent stands between this quote and an order.
+  open_deal_sent_quote_no_value the sent-quote kind on a deal left at value 0:
+                          the one case where N483 doesn't win the deal
+                          (live 2026-10-22: no error, the deal stays at
+                          negotiation). Kept so a platform fix shows up.
   open_deal_pending_quote the unpriced kind, plus the harness's own unpriced
                           Quotation for the item and qty (no rate, possible
                           since Release 13, N480), submitted for margin
@@ -74,6 +78,28 @@ Kinds (task field "fixture"):
                           removed on purpose (instructor, N191), so the
                           deal is the request to skip qualification,
                           proposal and negotiation.
+  funnel_lead             a Lead at `new` for a task in steps (a funnel):
+                          the agent walks it to an order itself, one run
+                          per step. The lead carries the list total of
+                          FIXTURE_QTY of an unpriced item (one with a list
+                          price), so the deal it converts into has a value
+                          to be won at (N483 skips a value-0 deal). The
+                          item is the one the agent will quote.
+
+Hand-offs (a funnel step with "harness"), the people the agent isn't, done
+by the harness between two agent steps (handoff()):
+  quote_at_list_price     the person who can price it. This seat has no
+                          margin-approval tool, and a quote taken back out
+                          of approval can't be sent: revise_quote returns
+                          it to draft but leaves approval_status
+                          pending_approval, and Send is guarded on that
+                          (live 2026-10-22). So the agent's quotation is
+                          left waiting for approval, and the person puts
+                          their own quotation for the item on the deal at
+                          list price (set-up only, not an offer) and sends
+                          it. The deal gets that total if it has no value.
+                          The funnel's quotation is now the person's; the
+                          agent's is kept as agent_quotation_id.
 
 Interference (task field "interference"), applied by the runner while
 the agent waits at a harness/gate.py gate (INTERFERENCE_GATES):
@@ -113,11 +139,13 @@ from transport.mcp_client import TRANSIENT, MCPToolError
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_pending_quote",
                  "open_deal_unpriced_draft", "open_deal_won_two_quotes", "open_deal_draft_quote",
                  "open_deal_sent_quote", "new_lead", "qualified_lead", "qualified_lead_with_deal",
-                 "new_deal")
-QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote", "open_deal_won_two_quotes")
+                 "new_deal", "funnel_lead", "open_deal_sent_quote_no_value")
+QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote", "open_deal_won_two_quotes",
+               "open_deal_sent_quote_no_value")
 # Kinds whose fixture quotation is still `sent` after the run: declined by retire().
-SENT_KINDS = ("open_deal_sent_quote", "open_deal_won_two_quotes")
-LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal")
+SENT_KINDS = ("open_deal_sent_quote", "open_deal_won_two_quotes", "open_deal_sent_quote_no_value")
+LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal", "funnel_lead")
+HANDOFF_KINDS = ("quote_at_list_price",)
 OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
 INTERFERENCE_GATES = {"close_deal_before_write": "before_quotation_write",
                       "close_deal_before_order": "before_order_write"}
@@ -222,6 +250,8 @@ def create(client, kind: str, run_id: str) -> dict:
                  lambda: (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0])
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
+    if kind == "funnel_lead":
+        return _funnel_lead(client, party, run_id)
     if kind in LEAD_KINDS:
         return _new_lead(client, party, run_id, kind)
     if kind == "new_deal":
@@ -253,7 +283,10 @@ def create(client, kind: str, run_id: str) -> dict:
         deal = _read(client, "Deal.get", {"id": deal["id"]})
         if deal.get("stage") != "negotiation":
             raise RuntimeError(f"fixture: deal {deal['id']} ended at {deal.get('stage')!r}, not negotiation")
-        if draft_quote:
+        if draft_quote and kind == "open_deal_sent_quote_no_value":
+            if float(deal.get("value") or 0):
+                raise RuntimeError(f"fixture: deal {deal['id']} has value {deal.get('value')}, not 0")
+        elif draft_quote:
             # A deal can't be won at value 0 ("Set a value first", live 2026-10-22), and
             # the conversion's win (N483) is skipped the same way: give it the quotes' total.
             client.call("Deal.update", {"id": deal["id"],
@@ -266,7 +299,7 @@ def create(client, kind: str, run_id: str) -> dict:
             quote = _unpriced_draft(client, deal, item, title)
         if kind == "open_deal_won_two_quotes":
             quote = _won_by_first_quote(client, deal, item, title, quote)
-        if kind == "open_deal_sent_quote":
+        if kind in ("open_deal_sent_quote", "open_deal_sent_quote_no_value"):
             quote = _send_quote(client, quote)
     except Exception:
         _mark_lost(client, deal["id"])   # don't leave a half-built open deal behind
@@ -314,6 +347,57 @@ def _new_lead(client, party: dict, run_id: str, kind: str = "new_lead") -> dict:
             "lead_title": title, "lead_status": row["status"], "lead_updated_at": row.get("updated_at"),
             "party_id": party["id"], "company_id": party["company_id"],
             "me": lead.get("created_by")}
+
+
+def _funnel_lead(client, party: dict, run_id: str) -> dict:
+    """A Lead at `new`, valued at the list total of the item the agent will quote."""
+    item = _unpriced_item(client, list_priced=True)
+    title = f"T6-harness-{run_id}"
+    lead = client.call("Lead.create", {
+        "party_id": party["id"], "company_id": party["company_id"],
+        "value": round(float(item["default_rate"]) * FIXTURE_QTY, 2), "source": "referral",
+        "notes": f"{title}: harness fixture lead for a funnel task, left at new"})
+    try:
+        row = _read(client, "Lead.get", {"id": lead["id"]})
+        if row.get("status") != "new":
+            raise RuntimeError(f"fixture: lead {lead['id']} is {row.get('status')!r}, not new")
+    except Exception:
+        _disqualify(client, lead["id"])
+        raise
+    return {"kind": "funnel_lead", "created_at": time.time(), "lead_id": row["id"],
+            "lead_title": title, "lead_status": row["status"], "lead_value": row.get("value"),
+            "party_id": party["id"], "company_id": party["company_id"],
+            "item_id": item["id"], "item_code": item.get("code"), "item_name": item.get("name"),
+            "list_rate": float(item["default_rate"]), "standard_rate": None,
+            "item_has_bom": bool(item.get("default_bom_id")), "qty": FIXTURE_QTY,
+            "me": lead.get("created_by")}
+
+
+def handoff(client, kind: str, state: dict) -> dict:
+    """A person's step between two agent steps of a funnel. Returns what it
+    did; its "state" entries are added to the funnel's state."""
+    if kind not in HANDOFF_KINDS:
+        raise ValueError(f"unknown hand-off {kind!r}; expected one of {HANDOFF_KINDS}")
+    return _quote_at_list_price(client, state)
+
+
+def _quote_at_list_price(client, state: dict) -> dict:
+    """The person who can price it: their own quotation for the item on the
+    deal, at list price, sent. The agent's quotation is left waiting for
+    approval. The deal gets the quote's total if it has no value (a value-0
+    deal isn't won by the conversion, N483)."""
+    agent_q = _unwrap(_read(client, "Quotation.get", {"id": state["quotation_id"]}))
+    deal = _read(client, "Deal.get", {"id": state["deal_id"]})
+    done: dict = {"agent_quotation_status": agent_q.get("status"), "deal_value_before": deal.get("value")}
+    if not float(deal.get("value") or 0):
+        client.call("Deal.update", {"id": deal["id"], "value": round(state["list_rate"] * state["qty"], 2)})
+    item = {"id": state["item_id"], "default_rate": state["list_rate"]}
+    quote = _send_quote(client, _draft_quote(client, deal, item, state["lead_title"]))
+    return {**done, "kind": "quote_at_list_price", "rate": state["list_rate"],
+            "quotation_number": quote["quotation_number"],
+            "deal_value_after": _read(client, "Deal.get", {"id": deal["id"]}).get("value"),
+            "state": {**quote, "agent_quotation_id": state["quotation_id"],
+                      "agent_quotation_number": state.get("quotation_number")}}
 
 
 def _new_deal(client, party: dict, run_id: str) -> dict:
@@ -538,6 +622,8 @@ def retire(client, fixture: dict) -> dict:
     left open. Never raises: a failed clean-up is recorded, it doesn't
     change the run's evidence."""
     out: dict = {"at": time.time()}
+    if fixture.get("kind") == "funnel_lead" and fixture.get("quotation_id"):
+        out["quote"] = _retire_quote(client, fixture)
     if fixture.get("kind") in LEAD_KINDS:
         try:
             out["closed_deals"] = _close_lead_deals(client, fixture["lead_id"])
@@ -545,13 +631,26 @@ def retire(client, fixture: dict) -> dict:
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"[:300]
         return out
-    if fixture.get("kind") in QUOTE_KINDS and fixture.get("quotation_id"):
+    out.update(_retire_quote(client, fixture))
+    try:
+        out.update(_mark_lost(client, fixture["deal_id"]))
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    return out
+
+
+def _retire_quote(client, fixture: dict) -> dict:
+    """Label orders from the fixture's quotations, decline one left sent, and
+    take ours out of the margin-approval queue."""
+    out: dict = {}
+    funnel = fixture.get("kind") == "funnel_lead"
+    if (fixture.get("kind") in QUOTE_KINDS or funnel) and fixture.get("quotation_id"):
         try:
             out["labelled_orders"] = [o for key in ("first_quotation_id", "quotation_id")
                                       if fixture.get(key) for o in _label_orders(client, fixture[key])]
         except Exception as e:
             out["label_error"] = f"{type(e).__name__}: {e}"[:300]
-    if fixture.get("kind") in SENT_KINDS and fixture.get("quotation_id"):
+    if (fixture.get("kind") in SENT_KINDS or funnel) and fixture.get("quotation_id"):
         try:
             out["declined"] = _decline_sent(client, fixture["quotation_id"])
         except Exception as e:
@@ -560,8 +659,4 @@ def retire(client, fixture: dict) -> dict:
         out["revised"] = _revise_pending(client, fixture)
     except Exception as e:
         out["revise_error"] = f"{type(e).__name__}: {e}"[:300]
-    try:
-        out.update(_mark_lost(client, fixture["deal_id"]))
-    except Exception as e:
-        out["error"] = f"{type(e).__name__}: {e}"[:300]
     return out

@@ -81,14 +81,33 @@ def test_file_escalation_defaults(fake_client):
 
 
 def test_file_escalation_dry_run_reads_but_never_creates(fake_client):
+    client = fake_client({"AgentEscalation.list": esc_list(), "AgentEscalation.create": _never})
+
+    out = escalation.file_escalation(client, "s1", "why", subject=SUBJECT, dry_run=True)
+
+    assert client.tools_called() == ["AgentEscalation.list"]
+    assert out["outcome"] == "escalated"
+    assert out["dry_run"] is True
+    assert out["escalation_id"] is None
+    assert out["would_file"]["subject"] == SUBJECT
+
+
+def test_file_escalation_dry_run_without_the_tool_is_a_refusal(fake_client):
+    # Off this seat's catalogue since 2026-10-15: the real run would be
+    # refused, so the dry run must not report an escalation it couldn't file.
     client = fake_client({"AgentEscalation.list": esc_list()})
 
     out = escalation.file_escalation(client, "s1", "why", subject=SUBJECT, dry_run=True)
 
     assert client.tools_called() == ["AgentEscalation.list"]
-    assert out["dry_run"] is True
-    assert out["escalation_id"] is None
+    assert out["outcome"] == "refused" and out["dry_run"] is True
+    assert "isn't available to this seat" in out["reason"]
     assert out["would_file"]["subject"] == SUBJECT
+
+
+def _never(args):
+    """In the catalogue, but a dry run must never call it."""
+    raise AssertionError(f"a dry run called AgentEscalation.create {args}")
 
 
 # --- records ----------------------------------------------------------------

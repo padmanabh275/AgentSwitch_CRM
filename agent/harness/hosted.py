@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     def on_task_done(entry: dict) -> None:
         if entry.get("status") == "ran":
             run_dir = Path(entry["run_dir"])
-            if (run_dir / "taskrun.json").exists():
+            if score.scorable(run_dir):
                 try:
                     scores[entry["task_id"]] = score.score_run(run_dir)
                 except Exception as e:  # a scorer bug fails this task, not the file

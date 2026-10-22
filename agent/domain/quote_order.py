@@ -217,7 +217,7 @@ def accept_quote(client: MCPClient, quotation_ref: str, customer_accepted: bool 
     if q.get("deal_id"):
         deal = client.call("Deal.get", {"id": q["deal_id"]})
         stage = deal.get("stage")
-        out.update(deal_stage_after=stage)
+        out.update(deal_stage_after=stage, deal_value=deal.get("value"))
         zero = stage != "closed_won" and not deal.get("value")
         out["reason"] += (f"; the platform marked deal {deal.get('title')!r} {stage} when the order was made"
                           if stage == "closed_won" else

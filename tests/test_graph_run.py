@@ -14,6 +14,12 @@ from llm import narrate
 from transport.llm_client import LLMError
 from transport.mcp_client import FORBIDDEN, TRANSIENT, MCPToolError
 
+
+def _never(args):
+    """In the catalogue, but a dry run must never call it."""
+    raise AssertionError(f"a dry run called AgentEscalation.create {args}")
+
+
 TODAY = dt.date(2026, 10, 5)
 ITEM_ID = "e7e982cd-dd11-4f31-b912-3f0a9903f6ed"
 
@@ -202,7 +208,8 @@ def finding(store):
 def test_composite_dry_run_escalates_without_filing(fake_client):
     client = fake_client({"Deal.list": deal_pages,
                           "Item.list": lambda a: {"data": [item()], "total": 1},
-                          "AgentEscalation.list": lambda a: {"data": []}})
+                          "AgentEscalation.list": lambda a: {"data": []},
+                          "AgentEscalation.create": _never})
 
     store = run(client, item_ref="ST-VICE-100", qty=500)
 
@@ -220,7 +227,8 @@ def test_composite_dry_run_escalates_without_filing(fake_client):
 def test_narration_falls_back_to_the_template_when_llm_is_down(fake_client):
     client = fake_client({"Deal.list": deal_pages,
                           "Item.list": lambda a: {"data": [item()], "total": 1},
-                          "AgentEscalation.list": lambda a: {"data": []}})
+                          "AgentEscalation.list": lambda a: {"data": []},
+                          "AgentEscalation.create": _never})
     out = run(client, item_ref="ST-VICE-100", qty=500).get("narrate").outcome.data
     assert out["source"] == "template"
     assert out["fallback_reason"] == "offline"

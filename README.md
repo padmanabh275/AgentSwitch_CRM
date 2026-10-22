@@ -215,6 +215,7 @@ cd agent
 uv run python -m harness.runner                 # all tasks, every run --dry-run
 uv run python -m harness.runner --tasks at_risk,quote_no_bom --skip-llm
 uv run python -m harness.runner --write --allow-permanent --tasks order_from_accepted_quote   # makes a sales order the seat can't delete
+uv run python -m harness.runner --write --allow-permanent --tasks full_funnel_lead_to_order   # lead to order, one agent run per step
 uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
 uv run python -m harness.error_guidance          # do wrong-state errors name only steps we have tools for? (N484)
 ```
@@ -289,6 +290,29 @@ deleted.
   read after the change, no quotation write attempted or present, the
   other writer's `closed_lost` left standing, and a refusal that names it.
 
+**Funnel task** (`full_funnel_lead_to_order`). A task can be a list of
+`steps` instead of one `argv`. Each step runs the agent once, as its own run
+(`runs/<run_id>.<n>-<step>/`), and is scored with its own `expect` and
+verifiers. A step's `capture` copies values from its finding into the next
+steps' placeholders, so the convert step passes on the deal it made and the
+quote step passes on its quotation. A `harness` step is a person's
+hand-off, done by the harness. The funnel starts from a `funnel_lead` at
+`new`. The agent then:
+
+1. contacts, qualifies and converts the lead;
+2. moves the deal through qualification, proposal and negotiation;
+3. quotes the item on the deal (an unpriced quotation, submitted for margin
+   approval).
+
+This seat has no approval tool, and a quote taken back out of approval
+can't be sent: `revise_quote` returns it to draft but leaves
+`approval_status` at `pending_approval`. So `quote_at_list_price` acts as
+the person who can price it. It leaves the agent's quote waiting for
+approval, puts its own quote for the item on the deal at list price, and
+sends it. The agent then orders that quote, and the conversion wins the
+deal. The first failing step stops the funnel, and clean-up still
+runs. `steps.json` in the task's run dir records each step in order.
+
 **Verifiers** (`agent/harness/verifiers.py`): the rules are re-derived from
 raw rows, not imported from `domain/`, and the agent's own snapshot is never
 ground truth, so a bug in the agent can't pass its own check.
@@ -302,6 +326,7 @@ ground truth, so a bug in the agent can't pass its own check.
 | `tools_absent` | `tools/list` has no tool for the request, and none was called |
 | `quotation_written` | the fixture deal has exactly one correct, sent quotation from this seat; the deal is untouched |
 | `stale_deal_guard` | after the harness closed the deal: re-read, no quotation written, the change kept, refusal names it |
+| `funnel_linked` | after a funnel's last step: every step ran; the lead is converted into exactly the deal the convert step named; on that deal, the agent's quote is still `pending_approval` and the person's is converted, both ours, with nothing else; exactly one order came from it, on that deal; the deal is `closed_won` (`error` if not, since the platform makes that win) |
 | `action_not_taken` | `tools/list` *does* offer the tool (so refusing is policy), it wasn't called, and the deal's stage is unchanged (`drift` if someone else moved it) |
 | `refusal_answer` | on every refusal task: the answer says it refuses, every amount and id in it came from the run, and a dry run doesn't claim an escalation it never filed |
 | every task | the run ended `done`; `expect` holds; `calls.jsonl` holds only reads (plus the four allowed writes in write mode, and a write task's own `extra_writes`); T6 session and escalation counts didn't grow in a dry run |

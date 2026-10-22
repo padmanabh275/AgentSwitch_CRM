@@ -6,6 +6,12 @@ import pytest
 from domain import items
 from transport.mcp_client import FORBIDDEN, NOT_FOUND, MCPToolError
 
+
+def _never(args):
+    """In the catalogue, but a dry run must never call it."""
+    raise AssertionError(f"a dry run called AgentEscalation.create {args}")
+
+
 UUID = "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0"
 
 
@@ -171,7 +177,8 @@ def test_price_lookup_refuses_bad_quantity(qty):
 # --- escalate_quote / attempt_quote -----------------------------------------
 
 def test_escalate_quote_carries_the_quote_context(fake_client):
-    client = fake_client({"AgentEscalation.list": lambda a: {"data": []}})
+    client = fake_client({"AgentEscalation.list": lambda a: {"data": []},
+                          "AgentEscalation.create": _never})
     priced = items.price_lookup(section(default_bom_id=None), 500)
 
     out = items.escalate_quote(client, "s1", priced, dry_run=True)

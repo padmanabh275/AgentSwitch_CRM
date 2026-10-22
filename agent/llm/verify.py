@@ -58,6 +58,17 @@ def _to_float(s: str) -> float | None:
         return None
 
 
+ZERO_VALUE_RE = re.compile(r"value (?:is |of |was )?(?:₹ ?)?(?:0|zero)\b|no value|without a value", re.I)
+
+
+def deal_left_open_said(text: str, order: dict) -> bool:
+    """An order that left its deal open says the stage it's still at, and
+    why when the deal has no value (N483 doesn't win a value-0 deal)."""
+    stage = order.get("deal_stage_after") or ""
+    named = re.search(re.escape(stage).replace("_", "[_ ]"), text, re.I) if stage else None
+    return bool(named) and (bool(order.get("deal_value")) or bool(ZERO_VALUE_RE.search(text)))
+
+
 def _mentions_amount(text: str, value: float) -> bool:
     return any(abs(v - value) <= TOLERANCE for v in money_in(text))
 
@@ -152,6 +163,11 @@ def verify_claims(text: str, finding: dict) -> dict:
     elif order.get("outcome") == "ordered" and order.get("deal_stage_after") == "closed_won" and (
             not re.search(r"(?:\b|_)won\b", text, re.I) or re.search(r"left as it is|left (?:it )?open", text, re.I)):
         missing.append("the deal is now closed_won (the platform marked it when the order was made)")
+    elif order.get("outcome") == "ordered" and order.get("deal_stage_after") not in (None, "closed_won") \
+            and not deal_left_open_said(text, order):
+        missing.append(f"the deal is still {order['deal_stage_after']}"
+                       + ("; its value is 0, so the platform didn't mark it won"
+                          if not order.get("deal_value") else ""))
     elif order.get("outcome") == "refused" and not re.search(
             r"no (?:sales )?order|not (?:been )?(?:made|created|converted)|can(?:no|')t|unable|refus|won't|will not",
             text, re.I):

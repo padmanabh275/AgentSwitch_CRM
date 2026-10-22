@@ -36,6 +36,11 @@ def task_status(checks: list[Check]) -> str:
     return "pass"
 
 
+def scorable(run_dir: Path) -> bool:
+    """A run left a record: its taskrun.json, or a task in steps its steps.json."""
+    return (run_dir / "taskrun.json").exists() or (run_dir / "steps.json").exists()
+
+
 def score_run(run_dir: Path) -> dict:
     files = RunFiles.load(run_dir)
     checks = check_run(files)
@@ -100,7 +105,7 @@ def score_batch(batch_dir: Path) -> tuple[Path, list[tuple[dict, dict | None]]]:
         if entry.get("status") != "ran":
             results.append((entry, None))
             continue
-        if not (run_dir / "taskrun.json").exists():
+        if not scorable(run_dir):
             results.append(({**entry, "status": "fail", "reason": "no taskrun.json was written"}, None))
             continue
         results.append((entry, score_run(run_dir)))
@@ -121,7 +126,7 @@ def main() -> int:
                 failed |= status == "fail"
                 print(f"  {status:8} {entry['task_id']}")
             print(f"[report: {report}]")
-        elif (path / "taskrun.json").exists():
+        elif scorable(path):
             score = score_run(path)
             failed |= score["status"] == "fail"
             print(f"  {score['status']:8} {score['task_id']}  [{path / 'score.json'}]")

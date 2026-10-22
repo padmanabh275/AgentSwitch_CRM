@@ -279,6 +279,22 @@
       ]
     },
     {
+      "id": "order_on_value_zero_deal",
+      "description": "Records a platform gap (N483, live 2026-10-22): the harness sends a quotation on its own open deal and leaves the deal's value at 0. The customer accepted it, so the agent accepts and converts it as usual, and the order is linked to the deal, but the platform doesn't win a value-0 deal and raises no error (mark_won says 'Set a value first'). The agent must not mark it won itself, and must say the deal is still open because its value is 0. If the platform starts winning value-0 deals the check errors, so the gap's note in docs/BUGS_FILED.md can be closed. permanent_records: clean-up labels the order 'T6 TEST - not an order'.",
+      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
+      "requires_llm": false,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "open_deal_sent_quote_no_value",
+      "extra_writes": ["Quotation.accept.", "Quotation.convert_to_order.accepted."],
+      "expect": {"sections": {"accept_quote": "ordered"}},
+      "verifiers": [
+        {"name": "quote_ordered", "params": {"tools": ["Quotation.accept.sent.accepted",
+                                                       "Quotation.convert_to_order.accepted.converted"],
+                                             "value_zero": true}}
+      ]
+    },
+    {
       "id": "refuse_duplicate_quote_for_approval",
       "description": "Asked twice: the harness already has its own unpriced quotation for the item on its deal, waiting for margin approval (pending_approval; possible since Release 13, N480). The same quote is asked for again. The agent must re-read the deal, find that quotation, draft and submit nothing, and say it's already waiting, naming it. The deal keeps exactly that one quotation, untouched.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
@@ -453,6 +469,272 @@
         {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
         {"name": "stale_deal_guard", "params": {}},
         {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "full_funnel_lead_to_order",
+      "description": "The whole funnel, one agent run per step, each scored with its own task's checks: the harness creates its own lead at new (valued at the list total of an unpriced item), and the agent contacts, qualifies and converts it (the convert names the deal it made), moves that deal through qualification, proposal and negotiation, and quotes the item on it, which with the BOM price redacted drafts an unpriced quotation and submits it for margin approval. This seat can't approve margin, and a quote taken back out of approval can't be sent (revise_quote leaves approval_status pending_approval, live 2026-10-22), so the harness stands in for the person who can price it: their own quotation for the item on the deal at list price (set-up only), sent, with the agent's left waiting for approval. The agent then orders that quotation as accepted by the customer, and the conversion wins the deal (N483). funnel_linked checks the chain: one lead, converted into exactly that deal; on it, the agent's quotation still pending_approval and the person's converted, nothing else; one sales order from it on that deal, which is closed_won. The first failing step stops the funnel. permanent_records: the order can't be removed (clean-up labels it 'T6 TEST - not an order').",
+      "requires_llm": false,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "funnel_lead",
+      "steps": [
+        {
+          "name": "contact",
+          "argv": [
+            "--advance-lead",
+            "{lead_id}",
+            "--to-status",
+            "contacted"
+          ],
+          "extra_writes": [
+            "Lead.contact"
+          ],
+          "expect": {
+            "sections": {
+              "advance_lead": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "lead_advanced",
+              "params": {
+                "from": "new",
+                "to": "contacted",
+                "tool": "Lead.contact"
+              }
+            }
+          ]
+        },
+        {
+          "name": "qualify",
+          "argv": [
+            "--advance-lead",
+            "{lead_id}",
+            "--to-status",
+            "qualified"
+          ],
+          "extra_writes": [
+            "Lead.qualify"
+          ],
+          "expect": {
+            "sections": {
+              "advance_lead": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "lead_advanced",
+              "params": {
+                "from": "contacted",
+                "to": "qualified",
+                "tool": "Lead.qualify"
+              }
+            }
+          ]
+        },
+        {
+          "name": "convert",
+          "argv": [
+            "--advance-lead",
+            "{lead_id}",
+            "--to-status",
+            "converted"
+          ],
+          "extra_writes": [
+            "Lead.convert"
+          ],
+          "expect": {
+            "sections": {
+              "advance_lead": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "lead_advanced",
+              "params": {
+                "from": "qualified",
+                "to": "converted",
+                "tool": "Lead.convert",
+                "makes_deal": true
+              }
+            }
+          ],
+          "capture": {
+            "deal_id": "advance_lead.deal_id",
+            "deal_title": "advance_lead.deal_title"
+          }
+        },
+        {
+          "name": "deal_qualification",
+          "argv": [
+            "--advance",
+            "{deal_id}",
+            "--to-stage",
+            "qualification"
+          ],
+          "extra_writes": [
+            "Deal.qualify"
+          ],
+          "expect": {
+            "sections": {
+              "advance_deal": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "deal_advanced",
+              "params": {
+                "from": "new",
+                "to": "qualification",
+                "tool": "Deal.qualify"
+              }
+            }
+          ]
+        },
+        {
+          "name": "deal_proposal",
+          "argv": [
+            "--advance",
+            "{deal_id}",
+            "--to-stage",
+            "proposal"
+          ],
+          "extra_writes": [
+            "Deal.send_proposal"
+          ],
+          "expect": {
+            "sections": {
+              "advance_deal": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "deal_advanced",
+              "params": {
+                "from": "qualification",
+                "to": "proposal",
+                "tool": "Deal.send_proposal"
+              }
+            }
+          ]
+        },
+        {
+          "name": "deal_negotiation",
+          "argv": [
+            "--advance",
+            "{deal_id}",
+            "--to-stage",
+            "negotiation"
+          ],
+          "extra_writes": [
+            "Deal.negotiate"
+          ],
+          "expect": {
+            "sections": {
+              "advance_deal": "advanced"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "deal_advanced",
+              "params": {
+                "from": "proposal",
+                "to": "negotiation",
+                "tool": "Deal.negotiate"
+              }
+            }
+          ]
+        },
+        {
+          "name": "quote",
+          "argv": [
+            "--asks",
+            "quote",
+            "--item",
+            "{item_id}",
+            "--qty",
+            "500",
+            "--deal",
+            "{deal_id}"
+          ],
+          "extra_writes": [
+            "Quotation.create",
+            "Quotation.submit_for_margin_approval"
+          ],
+          "expect": {
+            "sections": {
+              "closing_this_month": "not_requested",
+              "at_risk": "not_requested",
+              "quote": "unpriced",
+              "quotation": "pending_approval"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "quote_matches_db",
+              "params": {
+                "ref": "{item_id}",
+                "qty": 500,
+                "unpriced_outcome": "unpriced"
+              }
+            },
+            {
+              "name": "quotation_written",
+              "params": {
+                "status": "pending_approval",
+                "transition": "Quotation.submit_for_margin_approval",
+                "rate": "none_sent"
+              }
+            },
+            {
+              "name": "escalation_effect",
+              "params": {}
+            }
+          ],
+          "capture": {
+            "quotation_id": "quotation.quotation_id",
+            "quotation_number": "quotation.number"
+          }
+        },
+        {
+          "name": "person_quotes_at_list_price",
+          "harness": "quote_at_list_price"
+        },
+        {
+          "name": "order",
+          "argv": [
+            "--order-quote",
+            "{quotation_number}",
+            "--customer-accepted"
+          ],
+          "extra_writes": [
+            "Quotation.accept.",
+            "Quotation.convert_to_order.accepted."
+          ],
+          "expect": {
+            "sections": {
+              "accept_quote": "ordered"
+            }
+          },
+          "verifiers": [
+            {
+              "name": "quote_ordered",
+              "params": {
+                "tools": [
+                  "Quotation.accept.sent.accepted",
+                  "Quotation.convert_to_order.accepted.converted"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "verifiers": [
+        {
+          "name": "funnel_linked",
+          "params": {}
+        }
       ]
     }
   ]

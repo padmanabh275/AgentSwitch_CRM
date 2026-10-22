@@ -10,7 +10,8 @@ class FakeClient:
     """Stands in for MCPClient. `handlers` maps a tool name to either a
     function (args -> result) or a list of results returned in order.
     A result that is an MCPToolError is raised instead of returned.
-    Every call is recorded in `calls` as (tool, args).
+    Every call is recorded in `calls` as (tool, args). list_tools() is the
+    seat's catalogue: the tools it has handlers for.
     """
 
     def __init__(self, handlers: dict | None = None):
@@ -26,6 +27,9 @@ class FakeClient:
         if isinstance(result, MCPToolError):
             raise result
         return result
+
+    def list_tools(self) -> list[dict]:
+        return [{"name": name} for name in self.handlers]
 
     def tools_called(self) -> list[str]:
         return [tool for tool, _ in self.calls]
