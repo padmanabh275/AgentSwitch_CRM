@@ -38,6 +38,7 @@ from pathlib import Path
 
 from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
 from harness import fixtures, gate, verifiers
+from harness.batch_client import BatchClient
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
 from transport.mcp_client import BUDGET_EXHAUSTED, client_from_env, instance_from_env
@@ -52,6 +53,11 @@ MIN_AGENT_S = 60
 # A spent token budget is HTTP 429 budget_exhausted (not 401), and it doesn't
 # come back within the batch: every later task would fail the same way.
 BUDGET_REASON = "token budget exhausted (HTTP 429 budget_exhausted) before this task started"
+# A task that leaves records the seat can't remove (a SalesOrder has no
+# delete or cancel) runs only on a throwaway instance: the hosted run, or a
+# local batch given --allow-permanent.
+PERMANENT_REASON = ("leaves records this seat can't remove (a sales order): runs on the hosted "
+                    "instance, or locally with --allow-permanent")
 BUDGET_EVIDENCE = ("taskrun.json", "calls.jsonl", "chat_trace.json", "graph.json")
 
 
@@ -207,7 +213,8 @@ def select_tasks(data: dict, task_ids: str | None) -> list[dict]:
 
 def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool = False,
               tasks_file: Path = TASKS_PATH, on_task_done=None,
-              agent_timeout_s: float = AGENT_TIMEOUT_S, deadline: float | None = None) -> Path:
+              agent_timeout_s: float = AGENT_TIMEOUT_S, deadline: float | None = None,
+              allow_permanent: bool = False) -> Path:
     """Run `tasks` and record the batch; returns the batch directory.
 
     Each agent run is killed after agent_timeout_s. With a `deadline` (a
@@ -234,7 +241,7 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
                 "tasks_file": str(tasks_file), "runs": []}
     write_json(batch_dir / "manifest.json", manifest)
 
-    client = client_from_env(load_env())
+    client = BatchClient(client_from_env(load_env()))
     print(f"[batch {batch_id}] {data.get('instance') or 'unknown instance'}, "
           f"{len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
           f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}", flush=True)
@@ -253,6 +260,9 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
         elif task.get("requires_llm") and llm_skip_reason:
             entry.update(status="skipped", reason=llm_skip_reason)
             print(f"  - {task['id']}: skipped ({llm_skip_reason})", flush=True)
+        elif task.get("permanent_records") and not allow_permanent:
+            entry.update(status="skipped", reason=PERMANENT_REASON)
+            print(f"  - {task['id']}: skipped (permanent records; --allow-permanent)", flush=True)
         elif budget_spent:
             entry.update(status="skipped", reason=BUDGET_REASON)
             print(f"  - {task['id']}: skipped (token budget exhausted)", flush=True)
@@ -293,6 +303,8 @@ def main() -> int:
                     help="let the agent write to the platform (default: every run is --dry-run)")
     ap.add_argument("--skip-llm", action="store_true", help="skip tasks that need the LLM gateway")
     ap.add_argument("--tasks-file", type=Path, default=TASKS_PATH)
+    ap.add_argument("--allow-permanent", action="store_true",
+                    help="also run tasks that leave records the seat can't remove (sales orders)")
     args = ap.parse_args()
 
     data = load_tasks(args.tasks_file)
@@ -301,7 +313,7 @@ def main() -> int:
     except ValueError as e:
         ap.error(str(e))
     batch_dir = run_batch(data, tasks, write=args.write, skip_llm=args.skip_llm,
-                          tasks_file=args.tasks_file)
+                          tasks_file=args.tasks_file, allow_permanent=args.allow_permanent)
     print(f"\nNothing scored yet. Score with (from agent/):\n  uv run python -m harness.score {batch_dir}")
     return 0
 

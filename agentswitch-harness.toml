@@ -7,9 +7,13 @@
 # While standard_rate is redacted, the two priced-item write tasks are
 # left out as well: their fixture cannot be built, so scoring them only
 # adds failures. The other write tasks still run.
-# Keep --budget-minutes a few minutes under timeout_minutes.
+# timeout_minutes is one clock for install and both instances back to back.
+# The first instance writes its start time to hosted_clock.json; the second
+# stops at start + --total-minutes (keep that a few minutes under
+# timeout_minutes). --budget-minutes caps each instance on its own.
+# Tasks marked hosted_repeat_of in tasks.json are left out of this run.
 install = "pip install -r requirements.txt"
-run     = "python agent/run_hosted.py --write --budget-minutes 20 --task-timeout 180"
+run     = "python agent/run_hosted.py --write --budget-minutes 13.5 --total-minutes 27 --task-timeout 180"
 results = "results.json"
 instances = ["suryodaya", "keystone"]
-timeout_minutes = 25
+timeout_minutes = 30

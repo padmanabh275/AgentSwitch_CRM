@@ -145,6 +145,17 @@ def verify_claims(text: str, finding: dict) -> dict:
     elif lead.get("outcome") == "would_advance" and not re.search(r"dry[- ]run", text, re.I):
         missing.append("dry run: the lead was not moved")
 
+    order = finding.get("accept_quote") or {}
+    if order.get("outcome") == "ordered" and not (
+            order.get("order_number") and order["order_number"] in text):
+        missing.append(f"sales order {order.get('order_number')} made from quotation {order.get('number')}")
+    elif order.get("outcome") == "refused" and not re.search(
+            r"no (?:sales )?order|not (?:been )?(?:made|created|converted)|can(?:no|')t|unable|refus|won't|will not",
+            text, re.I):
+        missing.append("no order was made, and why")
+    elif order.get("outcome") == "would_order" and not re.search(r"dry[- ]run", text, re.I):
+        missing.append("dry run: no order was made")
+
     refusals = [r.get("request") for r in finding.get("refusals") or []]
     if refusals and not REFUSAL_RE.search(text):
         missing.append("that you can't do this, in so many words: " + "; ".join(map(str, refusals)))

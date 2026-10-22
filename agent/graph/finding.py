@@ -66,6 +66,8 @@ def build_finding(args: dict, outcomes: dict[str, NodeOutcome], ctx: "RunContext
                                if args.get("advance_requested") else {"outcome": "not_requested"})
     finding["advance_lead"] = (_section(args["sections"]["advance_lead"], outcomes)
                                if args.get("advance_lead_requested") else {"outcome": "not_requested"})
+    finding["accept_quote"] = (_section(args["sections"]["accept_quote"], outcomes)
+                               if args.get("accept_quote_requested") else {"outcome": "not_requested"})
     finding["refusals"] = [outcomes[i].data for i in args.get("refusals", []) if i in outcomes]
     finding["not_handled"] = args.get("not_handled")
     finding.update({

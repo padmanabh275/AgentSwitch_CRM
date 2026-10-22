@@ -12,7 +12,9 @@ submit_for_approval take the margin-approval route instead (no rate sent).
 advance_deal moves an open deal exactly one stage forward (new ->
 qualification -> proposal -> negotiation); won and lost stay out of reach.
 advance_lead does the same for a lead (new -> contacted -> qualified ->
-converted, which creates its deal).
+converted, which creates its deal). accept_quote turns a quotation the
+customer accepted into a sales order (accept if the user says so, then
+convert_to_order.accepted); never the sent -> converted shortcut.
 
 Node functions take (ctx, args, outcomes) where `outcomes` maps node id ->
 NodeOutcome for everything finished so far. Which upstream node a function
@@ -25,7 +27,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from domain import deal_stage, deals, items, lead_stage, quotations
+from domain import deal_stage, deals, items, lead_stage, quotations, quote_order
 from graph.finding import build_finding
 from graph.outcome import ANSWERED, NodeOutcome
 from harness import gate
@@ -153,6 +155,12 @@ REGISTRY: dict[str, NodeDef] = {
         fn=lambda ctx, a, o: lead_stage.advance_lead(ctx.client, a["lead_ref"], a.get("target_status"),
                                                      dry_run=ctx.dry_run),
         description="Move an open lead one status forward (convert makes its deal); read it back.",
+        writes=True),
+    "accept_quote": NodeDef(
+        fn=lambda ctx, a, o: quote_order.accept_quote(ctx.client, a["quotation_ref"],
+                                                      bool(a.get("customer_accepted")),
+                                                      dry_run=ctx.dry_run),
+        description="Accepted quotation -> sales order (accept first only if the customer did).",
         writes=True),
     "refuse": NodeDef(
         fn=lambda ctx, a, o: {"outcome": "refused", **a},

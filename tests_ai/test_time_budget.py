@@ -101,8 +101,41 @@ def test_budget_flags_reach_run_batch(monkeypatch, tmp_path):
     assert 110 < seen["left"] <= 120
 
 
+
+def test_second_instance_gets_only_what_the_first_left(tmp_path):
+    clock = tmp_path / hosted.CLOCK_NAME
+    first = hosted.shared_deadline(clock, "suryodaya", 27, now=1000.0)
+    second = hosted.shared_deadline(clock, "keystone", 27, now=1000.0 + 14 * 60)
+    assert first == second == 1000.0 + 27 * 60
+
+
+def test_a_stale_or_repeated_clock_starts_over(tmp_path):
+    clock = tmp_path / hosted.CLOCK_NAME
+    hosted.shared_deadline(clock, "suryodaya", 27, now=1000.0)
+    # an earlier submission: same instance again, or older than the total
+    assert hosted.shared_deadline(clock, "suryodaya", 27, now=1060.0) == 1060.0 + 27 * 60
+    assert hosted.shared_deadline(clock, "keystone", 27, now=9000.0) == 9000.0 + 27 * 60
+    clock.write_text("not json")
+    assert hosted.shared_deadline(clock, "keystone", 27, now=50.0) == 50.0 + 27 * 60
+
+
+def test_shared_clock_caps_the_instance_budget(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "load_tasks", lambda: DATA)
+    seen = {}
+
+    def fake_run_batch(data, tasks, deadline=None, **kw):
+        seen["left"] = deadline - time.monotonic()
+
+    monkeypatch.setattr(runner, "run_batch", fake_run_batch)
+    (tmp_path / hosted.CLOCK_NAME).write_text(
+        json.dumps({"started": time.time() - 20 * 60, "instances": ["suryodaya"]}))
+    monkeypatch.setenv("AGENTSWITCH_INSTANCE", "keystone")
+    hosted.main(["--out", str(tmp_path / "r.json"), "--budget-minutes", "13.5",
+                 "--total-minutes", "27"])
+    assert 410 < seen["left"] <= 420      # 7 min left on the shared clock, not 13.5
+
 def test_defaults_fit_a_full_batch_with_margin():
-    assert hosted.TASK_TIMEOUT_S >= 3 * 50          # 3x the slowest task on record
+    assert hosted.TASK_TIMEOUT_S >= 3 * 57          # 3x the slowest task on record
     assert hosted.BUDGET_MINUTES <= 30 - 3          # under the platform's max with margin
 
 

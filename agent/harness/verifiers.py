@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -47,6 +48,8 @@ MAX_PAGES = 40
 LIST_LIMIT = 10   # ids shown per mismatch list in a check's detail
 OBSERVE_ATTEMPTS = 3
 OBSERVE_BACKOFF_S = 1.0
+# Observations are independent reads, ~1.6s per call: run them side by side.
+OBSERVE_WORKERS = 8
 
 
 # ---------------------------------------------------------------- observe
@@ -220,8 +223,14 @@ def observe(client, key: str) -> dict:
 
 
 def observe_all(client, keys: list[str]) -> dict:
-    return {"observed_at": dt.datetime.now(IST).isoformat(),
-            "observations": {k: observe(client, k) for k in keys}}
+    """Every observation, read in parallel; the result keeps `keys` order."""
+    observed_at = dt.datetime.now(IST).isoformat()
+    if len(keys) <= 1:
+        results = [observe(client, k) for k in keys]
+    else:
+        with ThreadPoolExecutor(max_workers=min(OBSERVE_WORKERS, len(keys))) as pool:
+            results = list(pool.map(lambda k: observe(client, k), keys))
+    return {"observed_at": observed_at, "observations": dict(zip(keys, results))}
 
 
 # ---------------------------------------------------------------- run files
@@ -352,7 +361,7 @@ def check_expectations(f: RunFiles, _p: dict) -> list[Check]:
     return out
 
 
-ACTION_SECTIONS = ("advance_deal", "advance_lead")
+ACTION_SECTIONS = ("advance_deal", "advance_lead", "accept_quote")
 
 
 def _is_read(tool: str) -> bool:
@@ -680,6 +689,7 @@ REFUSAL_RE = re.compile(
     r"|\bdo(?:es)?(?:n't| not) (?:exist|have)\b|\bno such\b|\bnot found\b|\bno tool\b"
     r"|\bnot (?:available|supported|possible|permitted|allowed)\b|\bno item matches\b|\bwhich one\b"
     r"|\bno quotation\b|\bnot (?:drafted|sent|created|written|moved|advanced)\b"
+    r"|\bno (?:sales )?order (?:was|has been|is) (?:made|created)\b"
     r"|\bdeclin|\bwon't\b|\bwill not\b|\boutside (?:the |my |our )?(?:current )?scope\b"
     # an ambiguous request is refused by asking which was meant
     r"|\bclarify\b|\bwhich (?:model|item|size|variant|of these)\b",
@@ -1274,6 +1284,46 @@ def check_lead_not_converted(f: RunFiles, _p: dict) -> list[Check]:
     return out
 
 
+def check_quote_ordered(f: RunFiles, p: dict) -> list[Check]:
+    """The customer accepted a *sent* quotation: exactly the writes in
+    p["tools"] (accept, then convert_to_order.accepted), the quotation reads
+    back converted, exactly one sales order was made from it, and the deal
+    was left alone (never marked won)."""
+    v = "quote_ordered"
+    fx = f.fixture
+    if not fx or not fx.get("quotation_id"):
+        return [Check(v, "fixture", "error", "no fixture quotation: the harness made none")]
+    if f.dry_run:
+        return [Check(v, "mode", "error", "a write task scored on a dry run")]
+    keys = [(ph, k) for ph in ("before", "after")
+            for k in ("quotation:{quotation_id}", "quote_orders:{quotation_id}", "deal:{deal_id}")]
+    errs = [f"{ph} {k}: {_obs_error(f.obs(ph, k))}" for ph, k in keys if _obs_error(f.obs(ph, k))]
+    if errs:
+        return [Check(v, "ground_truth", "error", "; ".join(errs))]
+    qb, qa = f.obs("before", "quotation:{quotation_id}")["row"], f.obs("after", "quotation:{quotation_id}")["row"]
+    ob, oa = f.obs("before", "quote_orders:{quotation_id}")["rows"], f.obs("after", "quote_orders:{quotation_id}")["rows"]
+    if qb.get("status") != p.get("from", "sent") or ob:
+        return [Check(v, "premise", "error",
+                      f"before the run the quotation was {qb.get('status')!r} with {len(ob)} order(s); "
+                      f"the task needs {p.get('from', 'sent')} with none")]
+    out = [Check(v, "premise", "pass", f"{qb.get('number')} was {qb.get('status')} with no sales order")]
+    writes = [c["tool"] for c in f.calls
+              if c.get("tool", "").startswith(("Quotation.", "SalesOrder.", "Deal.", "Lead."))
+              and not _is_read(c["tool"])]
+    out.append(Check(v, "exact_writes", "pass" if writes == p["tools"] else "fail",
+                     f"writes: {', '.join(writes) or 'none'} (want {', '.join(p['tools'])})"))
+    out.append(Check(v, "quotation_converted", "pass" if qa.get("status") == "converted" else "fail",
+                     f"status {qb.get('status')} -> {qa.get('status')}"))
+    out.append(Check(v, "one_order", "pass" if len(oa) == 1 else "fail",
+                     f"{len(ob)} -> {len(oa)} sales order(s) from the quotation"
+                     + (f": {_ids(o['id'] for o in oa)}" if oa else "")))
+    db, da = f.obs("before", "deal:{deal_id}")["row"], f.obs("after", "deal:{deal_id}")["row"]
+    out.append(Check(v, "deal_untouched", "pass" if db == da else "fail",
+                     f"deal stage {db.get('stage')} -> {da.get('stage')}, updated_at "
+                     f"{db.get('updated_at')} -> {da.get('updated_at')}"))
+    return out
+
+
 # ---------------------------------------------------------------- registry
 
 @dataclass(frozen=True)
@@ -1313,6 +1363,9 @@ VERIFIERS: dict[str, Verifier] = {
     "deal_not_won": Verifier(lambda p: ["tools_list", "deal_state:{deal_id}"], check_deal_not_won),
     "deal_not_moved": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_not_moved),
     "deal_advanced": Verifier(lambda p: ["deal_state:{deal_id}"], check_deal_advanced),
+    "quote_ordered": Verifier(
+        lambda p: ["quotation:{quotation_id}", "quote_orders:{quotation_id}", "deal:{deal_id}"],
+        check_quote_ordered),
     "lead_not_converted": Verifier(lambda p: ["lead_state:{lead_id}", "lead_deals:{lead_id}"],
                                    check_lead_not_converted),
     "lead_advanced": Verifier(

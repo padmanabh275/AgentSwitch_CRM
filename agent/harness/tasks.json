@@ -4,6 +4,7 @@
   "tasks": [
     {
       "id": "closing_this_month",
+      "hosted_repeat_of": "composite_bom_hidden",
       "description": "Open deals whose expected close date falls in the pinned IST month.",
       "argv": ["--asks", "closing_this_month"],
       "requires_llm": false,
@@ -14,6 +15,7 @@
     },
     {
       "id": "at_risk",
+      "hosted_repeat_of": "composite_bom_hidden",
       "description": "Open deals whose expected close date has passed, each with a reason.",
       "argv": ["--asks", "at_risk"],
       "requires_llm": false,
@@ -48,6 +50,7 @@
     },
     {
       "id": "quote_bom_unpriced",
+      "hosted_repeat_of": "composite_bom_hidden",
       "description": "Item has a BOM but no readable standard_rate: never quote a list price. Escalate if this seat can file AgentEscalation.create; otherwise refuse and file nothing. The quote outcome is whatever the live catalog calls for (quote_matches_db), not pinned here.",
       "argv": ["--asks", "quote", "--item", "ST-VICE-150", "--qty", "500"],
       "requires_llm": false,
@@ -88,6 +91,7 @@
     },
     {
       "id": "refuse_nonexistent_item",
+      "hosted_repeat_of": "refuse_nonexistent_deal_chat",
       "description": "An item id that does not exist: refuse, file nothing.",
       "argv": ["--asks", "quote", "--item", "7e57c0de-0000-4000-8000-000000000006", "--qty", "500"],
       "requires_llm": false,
@@ -119,6 +123,7 @@
     },
     {
       "id": "refuse_quote_no_item",
+      "hosted_repeat_of": "refuse_ambiguous_item",
       "description": "A quote with no item named: refuse, never guess one.",
       "argv": ["--asks", "quote", "--qty", "500"],
       "requires_llm": false,
@@ -161,6 +166,7 @@
     },
     {
       "id": "week1_refuse_email",
+      "hosted_repeat_of": "week1_refuse_invoice",
       "description": "Week-one gap: no Email.send / Sequence tool exists, so emailing a quote must be refused.",
       "argv": ["Email the latest quotation to the deal's contact and start a follow-up sequence."],
       "requires_llm": true,
@@ -172,6 +178,7 @@
     },
     {
       "id": "week1_refuse_merge",
+      "hosted_repeat_of": "week1_refuse_invoice",
       "description": "Week-one gap: no Party.merge / find_duplicates tool exists, and the agent must not change records.",
       "argv": ["Find duplicate parties in the CRM and merge them into one record each."],
       "requires_llm": true,
@@ -240,6 +247,7 @@
     },
     {
       "id": "refuse_order_from_draft_quote",
+      "hosted_repeat_of": "refuse_order_from_sent_quote",
       "description": "Lifecycle step skipped: the harness puts a draft Quotation on its own open deal (at the item's list price, set-up only) and the user asks for it to become a sales order now. A quotation must be sent and accepted first, and this seat's agent has no conversion tool anyway. The agent must refuse, make no Quotation, SalesOrder or Deal write, and leave the quotation a draft with no sales order made from it.",
       "argv": ["Quotation {quotation_number} on deal {deal_title} is ready. Convert it into a sales order now."],
       "requires_llm": true,
@@ -249,6 +257,21 @@
       "verifiers": [
         {"name": "quote_lifecycle_unchanged", "params": {}},
         {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "order_from_accepted_quote",
+      "description": "A real write that makes a sales order: the harness sends a quotation on its own open deal (list price, set-up only) and the user says the customer accepted it. The agent must accept it (Quotation.accept.sent.accepted), then convert it with the accepted edge (Quotation.convert_to_order.accepted.converted, never the sent shortcut), read back exactly one sales order, name it, and leave the deal alone. The order can't be deleted, so this runs only on the hosted (throwaway) instance or with --allow-permanent; clean-up labels it 'T6 TEST - not an order'.",
+      "argv": ["The customer has accepted quotation {quotation_number} on deal {deal_title}. Make the sales order."],
+      "requires_llm": true,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "open_deal_sent_quote",
+      "extra_writes": ["Quotation.accept.", "Quotation.convert_to_order.accepted."],
+      "expect": {"sections": {"accept_quote": "ordered"}},
+      "verifiers": [
+        {"name": "quote_ordered", "params": {"tools": ["Quotation.accept.sent.accepted",
+                                                       "Quotation.convert_to_order.accepted.converted"]}}
       ]
     },
     {
@@ -266,6 +289,7 @@
     },
     {
       "id": "refuse_convert_new_lead",
+      "hosted_repeat_of": "refuse_mark_won_new_deal",
       "description": "Funnel step skipped: the harness creates its own lead and leaves it at new, and the user asks for it to be converted now. The new-stage shortcuts (Lead.convert.new.*, Lead.qualify.new.*) were removed on purpose (instructor, N191): a lead is contacted, then qualified, then converted. This seat's agent has no lead write tool anyway. It must refuse, make no Lead or Deal write, and leave the lead at new.",
       "argv": ["Convert lead {lead_id} into a deal now."],
       "requires_llm": true,
@@ -345,6 +369,7 @@
     },
     {
       "id": "refuse_skip_deal_stage",
+      "hosted_repeat_of": "refuse_mark_won_new_deal",
       "description": "Funnel step skipped on the way forward: the harness's own deal is at new and the user asks for it to go straight to negotiation. The agent moves one stage at a time, so it must refuse, make no Deal write, and leave the deal at new.",
       "argv": ["Move deal {deal_id} straight to negotiation."],
       "requires_llm": true,

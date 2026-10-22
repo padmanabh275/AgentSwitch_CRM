@@ -54,7 +54,9 @@ After the after-read, retire() takes our quotations on the fixture deal
 out of the margin-approval queue (revise_quote: pending_approval -> draft),
 so no approver is left pricing a test quote, then marks a still-open
 fixture deal closed_lost, so it doesn't sit in the shared book as an open
-undated deal. A sent fixture quotation is declined first, so no open "sent"
+undated deal. Any sales order made from a fixture quotation is labelled
+"T6 TEST - not an order" in its reference_number (the seat can't delete or
+cancel one). A sent fixture quotation is declined first, so no open "sent"
 test quote is left in the shared list. A lead fixture's deals (a converted
 lead has one) are closed the same way, then the lead is disqualified from
 whatever open status it is in. Nothing is deleted (the seat has no delete,
@@ -70,6 +72,7 @@ from __future__ import annotations
 import time
 
 from domain.deals import OPEN_STAGES
+from harness.batch_client import memo
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
@@ -119,6 +122,11 @@ def _tool_names(client) -> set[str]:
 
 
 def _all_items(client) -> list[dict]:
+    """Every item, paged. Fetched once per batch (harness/batch_client.py)."""
+    return memo(client, "fixtures:items", lambda: _page_items(client))
+
+
+def _page_items(client) -> list[dict]:
     rows, offset = [], 0
     for _ in range(ITEM_MAX_PAGES):
         page = _read(client, "Item.list", {"limit": ITEM_PAGE, "offset": offset})
@@ -170,7 +178,8 @@ def _priced_item(client) -> dict:
 def create(client, kind: str, run_id: str) -> dict:
     if kind not in FIXTURE_KINDS:
         raise ValueError(f"unknown fixture {kind!r}; expected one of {FIXTURE_KINDS}")
-    party = (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0]
+    party = memo(client, "fixtures:party",
+                 lambda: (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0])
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
     if kind in LEAD_KINDS:
@@ -342,6 +351,21 @@ def _decline_sent(client, quotation_id: str) -> dict:
     return {"tool": tool, "status_before": status, "status_after": after.get("status")}
 
 
+TEST_ORDER_REF = "T6 TEST - not an order"
+
+
+def _label_orders(client, quotation_id: str) -> list[dict]:
+    """Label every sales order made from the fixture quotation as a test."""
+    page = _read(client, "SalesOrder.list", {"quotation_id": quotation_id, "limit": ITEM_PAGE})
+    out = []
+    for so in page.get("data") or []:
+        if so.get("quotation_id") != quotation_id:
+            continue
+        client.call("SalesOrder.update", {"id": so["id"], "reference_number": TEST_ORDER_REF})
+        out.append({"order_id": so["id"], "number": so.get("number")})
+    return out
+
+
 def _mark_lost(client, deal_id: str) -> dict:
     deal = _read(client, "Deal.get", {"id": deal_id})
     stage = deal.get("stage")
@@ -400,6 +424,11 @@ def retire(client, fixture: dict) -> dict:
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"[:300]
         return out
+    if fixture.get("kind") in QUOTE_KINDS and fixture.get("quotation_id"):
+        try:
+            out["labelled_orders"] = _label_orders(client, fixture["quotation_id"])
+        except Exception as e:
+            out["label_error"] = f"{type(e).__name__}: {e}"[:300]
     if fixture.get("kind") == "open_deal_sent_quote" and fixture.get("quotation_id"):
         try:
             out["declined"] = _decline_sent(client, fixture["quotation_id"])
