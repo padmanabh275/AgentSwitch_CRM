@@ -111,15 +111,14 @@ def llm_gateway_up(timeout: float = 3.0) -> bool:
     return True
 
 
-GATE_NAME = "before_quotation_write"
 POLL_S = 0.2
 
 
 def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path,
               timeout_s: float = AGENT_TIMEOUT_S, argv: list[str] | None = None,
-              on_gate=None) -> dict:
+              on_gate=None, gate_name: str = "before_quotation_write") -> dict:
     """Run the agent in a subprocess. With on_gate, the agent is told to
-    stop at GATE_NAME (harness/gate.py); on_gate() runs while it waits,
+    stop at gate_name (harness/gate.py); on_gate() runs while it waits,
     and the agent is released only after it returns."""
     cmd = [sys.executable, str(AGENT_DIR / "run.py"), *(argv or task["argv"]),
            "--today", today, "--run-id", run_id, "--task-id", task["id"]]
@@ -146,12 +145,12 @@ def run_agent(task: dict, run_id: str, today: str, write: bool, run_dir: Path,
                 proc.wait()
                 code = "timeout"
                 break
-            if on_gate and not gated and (gate_dir / f"{GATE_NAME}.ready").exists():
+            if on_gate and not gated and (gate_dir / f"{gate_name}.ready").exists():
                 gated = True
                 try:
                     on_gate()
                 finally:  # never leave the agent hanging on a failed interference
-                    (gate_dir / f"{GATE_NAME}.go").write_text("go", encoding="utf-8")
+                    (gate_dir / f"{gate_name}.go").write_text("go", encoding="utf-8")
             time.sleep(POLL_S)
     out = out_path.read_text(encoding="utf-8", errors="replace")
     err = err_path.read_text(encoding="utf-8", errors="replace")
@@ -192,6 +191,7 @@ def run_task(client, task: dict, run_id: str, today: str, write: bool, run_dir: 
                         "error": f"{type(e).__name__}: {e}"[:300]}
             write_json(run_dir / "interference.json", done)  # before the agent is released
         extra["on_gate"] = on_gate
+        extra["gate_name"] = fixtures.INTERFERENCE_GATES[task["interference"]]
     result = run_agent(task, run_id, today, write, run_dir, timeout_s, **extra)
     write_json(run_dir / "ground_truth_after.json", verifiers.observe_all(client, keys))
     if fixture:

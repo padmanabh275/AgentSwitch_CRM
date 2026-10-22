@@ -196,7 +196,11 @@ products returns a wrapper the old unwrap didn't recognise.
 
 ---
 
-## 11. What rate goes on a quotation line the seat can't price?
+---
+
+## Resolved
+
+### 11. What rate goes on a quotation line the seat can't price?
 
 **Raised:** 2026-10-15.
 
@@ -210,7 +214,10 @@ required at the top level) — untested, and margin approval of an empty
 quote may be meaningless; (c) ask the instructor what the intended route
 for an unpriced item is now.
 
-**Status:** open. Until decided, `write_quote_for_approval` fails honestly
+**Status:** resolved 2026-10-22 by the platform: option (d), a line with
+no rate. See the update at the end of this section.
+
+**Status before Release 13:** open. Until decided, `write_quote_for_approval` fails honestly
 and no quotation is written.
 
 **Update 2026-10-16: refusal is the default.** `draft_for_approval` now reads
@@ -241,9 +248,18 @@ redacted, so we can't confirm ₹0 even triggers approval.
    `pending_approval`, and no send was made.
 6. Needs one live write to confirm ₹0 is accepted and routed to approval.
 
----
-
-## Resolved
+**Update 2026-10-22: resolved by Release 13 (N480, our drafts/BUG7).** The
+instructor's fix: `Quotation.create` now requires only `qty` on a line
+(checked live: `items.items.required == ["qty"]`). The seat drafts the line
+with no rate and submits it for margin approval; the approver sets the price
+and approves, so this seat never sees the cost. A quote with an unpriced
+line can't be sent, accepted or converted. No placeholder is needed, so
+option (a) is dropped. `line_rate_required` stays, so the agent refuses again
+if the requirement comes back. `refuse_unpriced_quote_rate_required` and its
+verifier `unpriced_quote_refused` are removed. `write_quote_for_approval` is
+back: `quotation_written` with `rate: none_sent`, `status: pending_approval`,
+and a premise check that errors if a rate is required again. Tested offline in
+`tests_ai/test_margin_approval_route.py`. Not yet run live with `--write`.
 
 ### Is `AgentMemory.create` worth keeping as the finding-storage step?
 

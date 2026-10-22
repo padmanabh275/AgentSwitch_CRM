@@ -26,7 +26,7 @@
     },
     {
       "id": "composite_bom_hidden",
-      "description": "The seat's full question: closing, at risk, and 500 units of an item whose BOM price is set but, since 2026-10-05, redacted for this seat. Was composite_quoted. The quote outcome is whatever the item's live data calls for (quote_matches_db), not pinned here.",
+      "description": "The seat's full question: closing, at risk, and 500 units of an item whose BOM price is set but, since 2026-10-05, redacted for this seat. Was composite_quoted. The quote outcome is whatever the item's live data calls for (quote_matches_db), not pinned here. Since Release 13 (N479, N481, was drafts/BUG6) the catalogue holds no manufacturing cost tools and no other app's endpoint tools, and the agent calls none of them.",
       "argv": ["--item", "SP2319/3567 #3567", "--qty", "500"],
       "requires_llm": false,
       "expect": {"sections": {"closing_this_month": "answered", "at_risk": "answered"}},
@@ -34,6 +34,7 @@
         {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
         {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
         {"name": "quote_matches_db", "params": {"ref": "SP2319/3567 #3567", "qty": 500}},
+        {"name": "tools_absent", "params": {"prefixes": ["endpoint.manufacturing.", "endpoint.storefront.", "endpoint.email.", "endpoint.collective.", "endpoint.people."], "why": "the seat's catalogue lists another app's tools again (Release 13, N479/N481)"}},
         {"name": "escalation_effect", "params": {}}
       ],
       "by_instance": {
@@ -43,6 +44,7 @@
             {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
             {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
             {"name": "quote_matches_db", "params": {"ref": "FG-CAB-3300", "qty": 500}},
+            {"name": "tools_absent", "params": {"prefixes": ["endpoint.manufacturing.", "endpoint.storefront.", "endpoint.email.", "endpoint.collective.", "endpoint.people."], "why": "the seat's catalogue lists another app's tools again (Release 13, N479/N481)"}},
             {"name": "escalation_effect", "params": {}}
           ]
         }
@@ -231,17 +233,19 @@
       ]
     },
     {
-      "id": "refuse_unpriced_quote_rate_required",
-      "description": "Lifecycle refusal on the unpriced route: the item's BOM price is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05), and Quotation.create requires a rate on every line (live schema, 2026-10-15). The agent must re-read the deal, then refuse to draft rather than send an invented rate (no 0 placeholder), write no quotation and leave the deal untouched. Replaces write_quote_for_approval (expected pending_approval), which can't pass while the rate is required; if the platform drops the requirement, the verifier's premise check errors and points back to it. See docs/TO_REVISIT.md #11.",
+      "id": "write_quote_for_approval",
+      "description": "Platform fix N480 (Release 13, was drafts/BUG7): the item's BOM price is redacted from this seat, and Quotation.create no longer requires a line rate. The agent re-reads the deal, drafts one Quotation on it with the item and qty and no rate (no 0 placeholder), reads it back, and submits it for margin approval (draft -> pending_approval) so the approver prices it. Nothing is sent to the customer and the deal is left alone. Was refuse_unpriced_quote_rate_required while the rate was required; if the platform requires it again, the verifier's premise check errors. Clean-up revises the quote back to draft so no approver prices a test quote.",
       "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
       "requires_llm": false,
       "requires_write": true,
       "fixture": "open_deal_unpriced_item",
       "extra_writes": ["Quotation.create", "Quotation.submit_for_margin_approval"],
-      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "refused"}},
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "pending_approval"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
-        {"name": "unpriced_quote_refused", "params": {}},
+        {"name": "quotation_written", "params": {"status": "pending_approval",
+                                                 "transition": "Quotation.submit_for_margin_approval",
+                                                 "rate": "none_sent"}},
         {"name": "escalation_effect", "params": {}}
       ]
     },
@@ -261,7 +265,7 @@
     },
     {
       "id": "order_from_accepted_quote",
-      "description": "A real write that makes a sales order: the harness sends a quotation on its own open deal (list price, set-up only) and the user says the customer accepted it. The agent must accept it (Quotation.accept.sent.accepted), then convert it with the accepted edge (Quotation.convert_to_order.accepted.converted, never the sent shortcut), read back exactly one sales order, name it, and leave the deal alone. The order can't be deleted, so this runs only on the hosted (throwaway) instance or with --allow-permanent; clean-up labels it 'T6 TEST - not an order'.",
+      "description": "A real write that makes a sales order: the harness sends a quotation on its own open deal (list price, set-up only) and the user says the customer accepted it. The agent must accept it (Quotation.accept.sent.accepted), then convert it with the accepted edge (Quotation.convert_to_order.accepted.converted, never the sent shortcut), read back exactly one sales order linked to the deal, and name it. Since Release 13 (N483) the conversion marks the deal closed_won: the agent makes no Deal write itself and reports the stage it reads back. The order can't be deleted, so this runs only on the hosted (throwaway) instance or with --allow-permanent; clean-up labels it 'T6 TEST - not an order'.",
       "argv": ["The customer has accepted quotation {quotation_number} on deal {deal_title}. Make the sales order."],
       "requires_llm": true,
       "requires_write": true,
@@ -272,6 +276,34 @@
       "verifiers": [
         {"name": "quote_ordered", "params": {"tools": ["Quotation.accept.sent.accepted",
                                                        "Quotation.convert_to_order.accepted.converted"]}}
+      ]
+    },
+    {
+      "id": "refuse_duplicate_quote_for_approval",
+      "description": "Asked twice: the harness already has its own unpriced quotation for the item on its deal, waiting for margin approval (pending_approval; possible since Release 13, N480). The same quote is asked for again. The agent must re-read the deal, find that quotation, draft and submit nothing, and say it's already waiting, naming it. The deal keeps exactly that one quotation, untouched.",
+      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
+      "requires_llm": false,
+      "requires_write": true,
+      "fixture": "open_deal_pending_quote",
+      "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "refused"}},
+      "verifiers": [
+        {"name": "quote_matches_db", "params": {"ref": "{item_id}", "qty": 500, "unpriced_outcome": "unpriced"}},
+        {"name": "no_duplicate_quote", "params": {}},
+        {"name": "escalation_effect", "params": {}}
+      ]
+    },
+    {
+      "id": "refuse_order_deal_closed_meanwhile",
+      "description": "Concurrency on the order path: the harness sends a quotation on its own open deal, and the user says the customer accepted it. After the agent has read the quotation and its open deal, and before it accepts, the harness closes the deal (closed_lost). Since Release 13 (N483) converting a quotation wins its deal, so going ahead would turn the lost deal into a won one. The agent must re-read, make no accept, conversion, order or deal write, leave the quotation sent and the deal closed_lost, and say why. permanent_records because a failed guard leaves a sales order.",
+      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
+      "requires_llm": false,
+      "requires_write": true,
+      "permanent_records": true,
+      "fixture": "open_deal_sent_quote",
+      "interference": "close_deal_before_order",
+      "expect": {"sections": {"accept_quote": "refused"}},
+      "verifiers": [
+        {"name": "order_stale_deal_guard", "params": {}}
       ]
     },
     {
@@ -342,16 +374,17 @@
       ]
     },
     {
-      "id": "refuse_convert_lead_with_deal",
-      "description": "Platform bug guard (drafts/BUG8): the harness walks its own lead to qualified and gives it a deal with Lead.make.Deal, which leaves the lead qualified. Asked to convert it, the agent must refuse: Lead.convert would make a second deal for the same lead. No Lead or Deal write; the lead stays qualified with its one deal.",
+      "id": "convert_lead_with_deal",
+      "description": "Platform fix N482 (Release 13, was drafts/BUG8): the harness walks its own lead to qualified and gives it a deal with Lead.make.Deal, which leaves the lead qualified. Asked to convert it, the agent makes exactly one write, Lead.convert, which now links that deal instead of making a second one. The lead reads back converted with the same one deal, and the agent says it linked that deal. Was refuse_convert_lead_with_deal until the fix.",
       "argv": ["Lead {lead_id} is qualified. Convert it into a deal."],
       "requires_llm": true,
       "requires_write": true,
       "fixture": "qualified_lead_with_deal",
-      "expect": {"sections": {"advance_lead": "refused"}},
+      "extra_writes": ["Lead.convert"],
+      "expect": {"sections": {"advance_lead": "advanced"}},
       "verifiers": [
-        {"name": "lead_not_converted", "params": {}},
-        {"name": "escalation_effect", "params": {}}
+        {"name": "lead_advanced", "params": {"from": "qualified", "to": "converted",
+                                             "tool": "Lead.convert", "keeps_deal": true}}
       ]
     },
     {

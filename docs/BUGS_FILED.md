@@ -3,7 +3,7 @@
 Seat `team06@theschoolofai.in` · Pipeline/crm · Suryodaya
 `https://agentswitch.theschoolofai.in` · company `5cbe5a55-af74-4363-a436-f5350593114c`
 
-**31 reports on file, all status `new`** (checked live 2026-10-05). 11 filed 2026-09-22 in the
+**32 reports on file, all status `new`** (checked live 2026-10-15). 11 filed 2026-09-22 in the
 gap-analysis session; 9 from the 2026-09-28 bug hunt (see *Filed from the 2026-09-28 bug hunt* below).
 `/api/bug-report/mine` and `BugReport.list` return the same 31.
 Live source of truth: `GET /api/bug-report/mine` (saved to `out/suryodaya/bugreport_mine_final.json`).
@@ -167,7 +167,7 @@ tell "no match" from "this entity's search doesn't cover that field".
 
 ---
 
-## Earlier and later reports — 11 (5 summarised without detail, see note below)
+## Earlier and later reports — 12 (5 summarised without detail, see note below)
 
 | Date | id | Finding |
 |------|----|---------|
@@ -178,6 +178,7 @@ tell "no match" from "this entity's search doesn't cover that field".
 | 09-22 | `62fa027c` | Live `tools/list` is 238, not the saved 247 (now 242 as of 09-28) |
 | — | `4e90fc79` | `reason_code` has no value that means anything across apps |
 | 09-28 | `87d456e5` | `Deal.update` advertises `stage` as writable, then rejects every value, including legal ones |
+| 10-15 | `b1a06b93` | `tools/list` advertises four `endpoint.manufacturing.*` cost tools (`standard_cost_rolls.frozen`/`.drafts`, `purchase_price_variance`, `job_margin`) that 403 on every call. Draft: `../drafts/BUG6_cost_tools_listed_but_403.txt`. ✅ **Fixed in Release 13 (N481)**, see below |
 
 
 > **Note on scope.** Five reports covering seat isolation and cross-app access are summarised
@@ -186,6 +187,28 @@ tell "no match" from "this entity's search doesn't cover that field".
 > or capability gap in the sales/CRM surface and is reproduced in full.
 
 ---
+
+## ✅ Fixed in Release 13 — 8 (21 Oct 2026, 14:05 IST, Suryodaya and Keystone)
+
+The instructor's release notes list these as fixed for team06. N-numbers are the instructor's
+ticket numbers. "Live check" is our own re-check on 2026-10-22, reads and refused calls only.
+N480, N482 and N483 only show after a write. They are covered by harness write tasks, which run
+on the hosted copy or locally with `--write`, and have not yet been run live.
+
+| N | Our report | Fix | Live check 10-22 | What changed on our side |
+|---|---|---|---|---|
+| N479 | seat isolation (summarised above) | Endpoint tools for apps the seat doesn't hold (storefront, email lists, collective, people directory) are no longer listed or callable | ✅ none listed; `endpoint.storefront.products` → `tool_not_available` | `composite_bom_hidden` checks with `tools_absent`, on both instances |
+| N480 | `drafts/BUG7` | A quote line may have no rate; submit for margin approval, the approver prices it. An unpriced quote can't be sent, accepted or converted | ✅ `Quotation.create` line requires only `qty` | `write_quote_for_approval` replaces `refuse_unpriced_quote_rate_required`; TO_REVISIT #11 resolved |
+| N481 | `b1a06b93` (`drafts/BUG6`) | Manufacturing cost tools that always 403'd are no longer listed | ✅ no `manufacturing` tool in 234 | same `tools_absent` check |
+| N482 | `drafts/BUG8` | `Lead.convert` on a lead that already has a deal links that deal instead of making a second | write needed | agent converts instead of refusing and checks the deal is the same one; `convert_lead_with_deal` replaces `refuse_convert_lead_with_deal` |
+| N483 | `drafts/BUG10` | Quote → sales order links the order to its deal and marks the deal won | write needed (`SalesOrder.create` schema now has `deal_id`) | agent reads the deal back and reports it won (no longer "left as it is"); `quote_ordered` checks `order_linked_to_deal`, `deal_won_by_platform`, `finding_matches` |
+| N484 | `drafts/BUG9`, `drafts/BUG11` | Errors name only steps the seat can take; wrong-state errors carry `invalid_transition` | ✅ draft → accept/decline offers only "Submit for Margin Approval; Send" (no Cancel/Expire), code `invalid_transition` | none needed |
+| N485 | — | `skill.export` with no selector → `invalid_arguments` naming the fields | ✅ `endpoint.agent.skill.export {}` → `invalid_arguments`, field `/`: "Provide one of: skill_id, persona_id, persona_name." | none (agent doesn't use it) |
+| N487 | `01f3201b` (D6) | Provider filters accept the older provider names | ✅ enum now has `claude`/`anthropic`, `gemini`/`google`, … | none (agent doesn't use it) |
+
+Seen while checking: `Quotation.make.SalesOrder` on an already-converted quotation returns the
+existing order (our test order SO-2026-00241) instead of refusing, so a repeat call is idempotent
+and makes no second order. We did not file this.
 
 ## ⚠️ Two filed reports may no longer reproduce
 
@@ -209,7 +232,7 @@ drafts are filed; D10 was dropped. Dates are the platform's `created_at` (UTC).
 | D3 | `58ea5034` | 09-27 | List schemas advertise create-time defaults and placeholders on filters (`Deal.list` goes to 0 of 143) | high |
 | D4 | `92f40dae` | 09-27 | `AgentSession.update` stores negative tool-call, token and cost counters | medium |
 | D5 | `8a9b1cc1` | 09-27 | `Deal.create` accepts any currency string (`ZZZ`) | medium |
-| D6 | `01f3201b` | 09-27 | `AgentProvider.list` `provider` enum allows 1 of the 7 providers that exist | medium |
+| D6 | `01f3201b` | 09-27 | `AgentProvider.list` `provider` enum allows 1 of the 7 providers that exist ✅ **fixed in Release 13 (N487)** | medium |
 | D7 | `4a0f2d5d` | 09-27 | `ContactGroupMember.list` ignores `search` (same class as `5f44fa94`) | medium |
 | D8 | `2ad62cbf` | 10-05 | An unknown `sort_by` on `Deal.list` / `Party.list` errors with no `data.code`, unlike every other argument error | medium |
 | D9 | `c68f1d54` | 10-04 | An escalation created without `channel` is never raised, routed or given an SLA | medium |

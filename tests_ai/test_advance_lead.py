@@ -2,9 +2,10 @@
 
 advance_lead: one step forward per request (new -> contacted -> qualified ->
 converted), never skipping or going back, never disqualifying. Converting
-uses Lead.convert, which makes the deal itself (probed live 2026-10-21); a
-lead that already has a deal is refused, because converting it would make a
-second one. Nothing touches the network.
+uses Lead.convert, which makes the deal itself (probed live 2026-10-21). A
+lead that already has a deal is converted too: since Release 13 (N482)
+Lead.convert links that deal instead of making a second one (drafts/BUG8),
+and a second deal after the convert is an error. Nothing touches the network.
 """
 from __future__ import annotations
 
@@ -28,10 +29,12 @@ TOOLS = ["Lead.contact", "Lead.qualify", "Lead.convert", "Lead.get", "Deal.list"
 
 
 class Platform:
-    def __init__(self, status="new", deals=(), tools=TOOLS, moves=True, extra_deal=False):
+    # links: Lead.convert links a deal the lead already has (Release 13, N482);
+    # links=False is the platform before the fix, which made a second one (BUG8).
+    def __init__(self, status="new", deals=(), tools=TOOLS, moves=True, extra_deal=False, links=True):
         self.lead = {"id": LEAD, "status": status, "party_id": "p1", "updated_at": "t0"}
         self.deals = [dict(d) for d in deals]
-        self.tools, self.moves, self.extra_deal, self.calls = tools, moves, extra_deal, []
+        self.tools, self.moves, self.extra_deal, self.links, self.calls = tools, moves, extra_deal, links, []
 
     def list_tools(self):
         return [{"name": n} for n in self.tools]
@@ -51,7 +54,7 @@ class Platform:
                 raise MCPToolError("bad transition", code=INVALID_TRANSITION)
             if self.moves:
                 self.lead.update(status=lead_stage.NEXT_STEP[self.lead["status"]][0], updated_at="t1")
-                if tool == "Lead.convert":
+                if tool == "Lead.convert" and not (self.links and self.deals):
                     self.deals.append({"id": "d1", "title": "Deal from H4 party", "stage": "new",
                                        "lead_id": LEAD})
                     if self.extra_deal:
@@ -105,12 +108,46 @@ def test_convert_uses_lead_convert_and_names_the_deal_it_made():
     assert "Lead.make.Deal" not in p.calls
 
 
-def test_a_lead_that_already_has_a_deal_is_not_converted():
-    # Lead.make.Deal leaves the lead qualified; converting it then makes a second deal.
-    p = Platform(status="qualified", deals=[{"id": "d0", "title": "T6 deal", "stage": "new",
-                                             "lead_id": LEAD}])
+T6_DEAL = {"id": "d0", "title": "T6 deal", "stage": "new", "lead_id": LEAD}
+
+
+def test_a_lead_that_already_has_a_deal_is_converted_and_keeps_it():
+    # Lead.make.Deal leaves the lead qualified; since N482 converting links that deal.
+    p = Platform(status="qualified", deals=[T6_DEAL])
     out = advance_lead(p, LEAD)
-    assert out["outcome"] == "refused" and "already has deal 'T6 deal'" in out["reason"]
+    assert out["outcome"] == "advanced" and writes(p) == ["Lead.convert"]
+    assert (out["deal_id"], out["deal_linked"]) == ("d0", True)
+    assert "linked the deal it already had, 'T6 deal'" in out["reason"]
+    assert out["existing_deals"] == [T6_DEAL]
+
+
+def test_a_new_deal_is_reported_as_created_not_linked():
+    out = advance_lead(Platform(status="qualified"), LEAD)
+    assert out["deal_linked"] is False and "created deal" in out["reason"]
+
+
+def test_the_old_second_deal_behaviour_is_an_error_not_success():
+    # If BUG8 came back, the convert lands but the lead ends with two deals.
+    p = Platform(status="qualified", deals=[T6_DEAL], links=False)
+    out = advance_lead(p, LEAD)
+    assert out["outcome"] == "error" and "2 deal(s)" in out["reason"]
+
+
+def test_a_convert_that_swaps_the_deal_is_an_error():
+    class Swaps(Platform):
+        def call(self, tool, args=None):
+            out = super().call(tool, args)
+            if tool == "Lead.convert":
+                self.deals = [{"id": "d9", "title": "other", "stage": "new", "lead_id": LEAD}]
+            return out
+    out = advance_lead(Swaps(status="qualified", deals=[T6_DEAL]), LEAD)
+    assert out["outcome"] == "error" and "not the deal it had ('T6 deal')" in out["reason"]
+
+
+def test_a_lead_with_two_deals_is_not_converted():
+    p = Platform(status="qualified", deals=[T6_DEAL, {**T6_DEAL, "id": "d00", "title": "T6 deal 2"}])
+    out = advance_lead(p, LEAD)
+    assert out["outcome"] == "refused" and "already has 2 deals" in out["reason"]
     assert writes(p) == []
 
 
@@ -254,11 +291,11 @@ def test_retire_closes_the_deal_a_conversion_made():
     assert out["tool"] is None   # a converted lead is closed already: no disqualify
 
 
-def run(calls, after, deals_before=(), deals_after=(), before=None):
+def run(calls, after, deals_before=(), deals_after=(), before=None, finding=None):
     before = before or {"id": LEAD, "status": "qualified", "updated_at": "t0"}
     obs = lambda row, deals: {f"lead_state:{LEAD}": {"row": row}, f"lead_deals:{LEAD}": {"rows": list(deals)}}
     return RunFiles(run_dir=Path("."), task={"id": "t"}, graph=None, chat_trace=None,
-                    taskrun={"ended": "done", "dry_run": False, "finding": {}},
+                    taskrun={"ended": "done", "dry_run": False, "finding": finding or {}},
                     calls=[{"tool": t} for t in calls], before={"observations": obs(before, deals_before)},
                     after={"observations": obs(after, deals_after)}, fixture={"lead_id": LEAD})
 
@@ -291,7 +328,7 @@ def test_an_action_section_refusal_counts_toward_refusals_min():
     assert by_name(check_expectations(f, {}))["refusals"] == "pass"
 
 
-# --- the BUG8 guard: a qualified lead that already has a deal ------------------
+# --- N482 (was BUG8): a qualified lead that already has a deal ------------------
 
 class WithDealPlatform(FixturePlatform):
     def call(self, tool, args=None):
@@ -317,49 +354,40 @@ def test_with_deal_retire_closes_the_deal_and_disqualifies_the_lead():
     assert out["tool"] == "Lead.disqualify.qualified.disqualified"
 
 
-QUALIFIED = {"id": LEAD, "status": "qualified", "updated_at": "t0"}
+KEEP = {"from": "qualified", "to": "converted", "tool": "Lead.convert", "keeps_deal": True}
+LINKED = {"advance_lead": {"outcome": "advanced", "deal_id": "d0", "deal_linked": True}}
 
 
-def test_lead_not_converted_passes_a_clean_refusal():
-    from harness.verifiers import check_lead_not_converted
-    got = by_name(check_lead_not_converted(run(["Lead.get", "Deal.list"], QUALIFIED,
-                                               deals_before=[{"id": "d0"}], deals_after=[{"id": "d0"}]), {}))
+def test_keeps_deal_passes_a_convert_that_links_the_deal():
+    got = by_name(check_lead_advanced(run(["Lead.get", "Deal.list", "Lead.convert", "Lead.get"], CONVERTED,
+                                          deals_before=[{"id": "d0"}], deals_after=[{"id": "d0"}],
+                                          finding=LINKED), KEEP))
     assert set(got.values()) == {"pass"}, got
 
 
-def test_lead_not_converted_catches_the_second_deal():
-    from harness.verifiers import check_lead_not_converted
-    got = by_name(check_lead_not_converted(run(["Lead.convert"], CONVERTED, deals_before=[{"id": "d0"}],
-                                               deals_after=[{"id": "d0"}, {"id": "d1"}]), {}))
-    assert got["no_funnel_write"] == got["lead_untouched"] == got["no_second_deal"] == "fail"
+def test_keeps_deal_catches_the_second_deal():
+    got = by_name(check_lead_advanced(run(["Lead.convert"], CONVERTED, deals_before=[{"id": "d0"}],
+                                          deals_after=[{"id": "d0"}, {"id": "d1"}], finding=LINKED), KEEP))
+    assert got["deal_linked"] == got["finding_matches"] == "fail"
 
 
-def test_lead_not_converted_needs_exactly_one_deal_before():
-    from harness.verifiers import check_lead_not_converted
-    got = by_name(check_lead_not_converted(run(["Lead.get"], QUALIFIED), {}))
+def test_keeps_deal_catches_a_finding_that_says_created():
+    finding = {"advance_lead": {"outcome": "advanced", "deal_id": "d0", "deal_linked": False}}
+    got = by_name(check_lead_advanced(run(["Lead.convert"], CONVERTED, deals_before=[{"id": "d0"}],
+                                          deals_after=[{"id": "d0"}], finding=finding), KEEP))
+    assert (got["deal_linked"], got["finding_matches"]) == ("pass", "fail")
+
+
+def test_keeps_deal_needs_exactly_one_deal_before():
+    got = by_name(check_lead_advanced(run(["Lead.convert"], CONVERTED, deals_after=[{"id": "d1"}]), KEEP))
     assert got == {"premise": "error"}
 
 
-# --- "is qualified. Convert it into a deal." -----------------------------------
-
-CONVERT_ASK = f"Lead {LEAD} is qualified. Convert it into a deal."
-
-
-@pytest.mark.parametrize("model_said", ["qualified", "", "contacted"])
-def test_convert_into_a_deal_pins_the_target(model_said):
-    # Live 2026-10-21 the model returned the current status as the target.
-    got = intent.pin_convert_target(intent.validate(raw(lead_ref=LEAD, target_status=model_said)),
-                                    CONVERT_ASK)
-    assert got["advance_lead"]["target_status"] == "converted"
-
-
-def test_pin_leaves_other_requests_alone():
-    v = intent.validate(raw(lead_ref=LEAD, target_status="contacted"))
-    assert intent.pin_convert_target(v, f"Mark lead {LEAD} as contacted.") == v
-    assert intent.pin_convert_target(intent.validate(raw()), CONVERT_ASK)["advance_lead"] is None
-
-
-def test_parse_request_applies_the_pin(monkeypatch):
-    reply = {"parsed": raw(lead_ref=LEAD, target_status="qualified")}
-    monkeypatch.setattr(intent, "call_llm", lambda *a, **k: reply)
-    assert intent.parse_request(CONVERT_ASK)["advance_lead"]["target_status"] == "converted"
+def test_the_with_deal_task_converts_and_checks_the_deal_is_kept():
+    import json
+    tasks = json.loads((Path(__file__).parents[1] / "agent/harness/tasks.json").read_text())["tasks"]
+    ids = {t["id"] for t in tasks}
+    task = next(t for t in tasks if t["id"] == "convert_lead_with_deal")
+    assert "refuse_convert_lead_with_deal" not in ids
+    assert task["fixture"] == "qualified_lead_with_deal" and task["requires_write"]
+    assert task["verifiers"][0]["params"]["keeps_deal"] is True

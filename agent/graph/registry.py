@@ -157,9 +157,9 @@ REGISTRY: dict[str, NodeDef] = {
         description="Move an open lead one status forward (convert makes its deal); read it back.",
         writes=True),
     "accept_quote": NodeDef(
-        fn=lambda ctx, a, o: quote_order.accept_quote(ctx.client, a["quotation_ref"],
-                                                      bool(a.get("customer_accepted")),
-                                                      dry_run=ctx.dry_run),
+        fn=lambda ctx, a, o: quote_order.accept_quote(
+            ctx.client, a["quotation_ref"], bool(a.get("customer_accepted")), dry_run=ctx.dry_run,
+            before_write=lambda: gate.wait_at("before_order_write")),
         description="Accepted quotation -> sales order (accept first only if the customer did).",
         writes=True),
     "refuse": NodeDef(

@@ -13,6 +13,14 @@ because Team 07 shares the book:
 3. send_quotation: re-read the quotation, send it only if it is still a
    draft and the read-back matched, then read it again to confirm `sent`.
 
+Before either write route drafts anything, the deal's quotations are read
+(Quotation.list by deal_id, checked here too). If one that is still in
+flight (draft, pending approval, sent, viewed or accepted) already carries
+the item, the request is refused and that quotation is named: asked twice,
+the agent would otherwise put a second quote for the same thing in front
+of the customer, or in the approver's queue twice. Possible since Release 13
+(N480), when the unpriced route started writing.
+
 Quotation.create is used, not Deal.make.Quotation: make copies the deal's
 own products, and editing the deal's products to get 500 units on it
 would change a record this agent doesn't own. Quotation.create with
@@ -43,6 +51,9 @@ MONEY_TOLERANCE = 0.01
 # Deal and Quotation transitions elsewhere are named verb.<from>.<to>, so
 # both shapes are accepted, matched against the live catalogue.
 SEND_TOOL = "Quotation.send"
+# A quotation that can still become an order: one of these on the deal for
+# the same item blocks a second.
+IN_FLIGHT = ("draft", "pending_approval", "sent", "viewed", "accepted")
 
 
 def _pick(row: dict, keys: tuple[str, ...]) -> dict:
@@ -58,6 +69,28 @@ def _unwrap(result: dict) -> dict:
             and isinstance(result.get("result"), dict):
         return result["result"]
     return result
+
+
+def in_flight_quote(client: MCPClient, deal_id: str, item_id: str) -> dict | None:
+    """A quotation on the deal, still in flight, with a line for the item.
+    The deal_id filter is checked here too: one the server ignored would
+    match another deal's quote."""
+    rows = client.call("Quotation.list", {"deal_id": deal_id, "limit": 100}).get("data") or []
+    for row in rows:
+        if (row.get("deal_id") == deal_id and row.get("status") in IN_FLIGHT
+                and any(line.get("item_id") == item_id for line in row.get("items") or [])):
+            return _pick(row, ("id", "number", "status", "created_by", "updated_at"))
+    return None
+
+
+def _duplicate_refusal(client: MCPClient, deal: dict, item_id: str, base: dict) -> dict | None:
+    existing = in_flight_quote(client, deal["id"], item_id)
+    if not existing:
+        return None
+    return {**base, "outcome": "refused", "existing_quotation": existing,
+            "reason": (f"not drafted: quotation {existing.get('number') or existing['id']} for this "
+                       f"item is already {existing['status']} on deal {deal['title']!r}; a second one "
+                       "would ask for the same thing twice")}
 
 
 def read_open_deal(client: MCPClient, deal_id: str) -> dict:
@@ -140,6 +173,9 @@ def create_quotation(client: MCPClient, deal_read: dict, priced: dict, run_id: s
     deal, refusal = _reread_deal(client, first, base)
     if refusal:
         return refusal
+    duplicate = _duplicate_refusal(client, deal, priced["item_id"], base)
+    if duplicate:
+        return duplicate
     args = quotation_args(deal, priced, run_id)
     if dry_run:
         return {**base, "outcome": "would_create", "dry_run": True, "would_create": args,
@@ -268,6 +304,9 @@ def draft_for_approval(client: MCPClient, deal_read: dict, priced: dict, run_id:
     deal, refusal = _reread_deal(client, first, base)
     if refusal:
         return refusal
+    duplicate = _duplicate_refusal(client, deal, priced["item_id"], base)
+    if duplicate:
+        return duplicate
     if line_rate_required(client):
         # No placeholder rate (e.g. 0) by default: a priced-looking line on a
         # customer document is an invented price. See docs/TO_REVISIT.md #11.

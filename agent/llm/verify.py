@@ -149,6 +149,9 @@ def verify_claims(text: str, finding: dict) -> dict:
     if order.get("outcome") == "ordered" and not (
             order.get("order_number") and order["order_number"] in text):
         missing.append(f"sales order {order.get('order_number')} made from quotation {order.get('number')}")
+    elif order.get("outcome") == "ordered" and order.get("deal_stage_after") == "closed_won" and (
+            not re.search(r"(?:\b|_)won\b", text, re.I) or re.search(r"left as it is|left (?:it )?open", text, re.I)):
+        missing.append("the deal is now closed_won (the platform marked it when the order was made)")
     elif order.get("outcome") == "refused" and not re.search(
             r"no (?:sales )?order|not (?:been )?(?:made|created|converted)|can(?:no|')t|unable|refus|won't|will not",
             text, re.I):

@@ -3,8 +3,10 @@
 accept_quote: a quotation the customer accepted becomes a sales order. An
 accepted one is converted; a sent one is accepted first, only if the user
 says the customer accepted it; everything else is refused. The order is made
-with convert_to_order.accepted, never the sent -> converted shortcut, and
-the deal is never marked won. Nothing touches the network.
+with convert_to_order.accepted, never the sent -> converted shortcut. The
+agent never marks the deal won; since Release 13 (N483) the conversion does,
+and links the order to the deal, so the answer reports the deal as it reads
+back. Nothing touches the network.
 """
 from __future__ import annotations
 
@@ -31,12 +33,15 @@ ACCEPT_SENT = "Quotation.accept.sent.accepted"
 
 
 class Platform:
+    # pre_r13: the platform before Release 13, whose conversion left the deal
+    # open and the order with no deal_id (drafts/BUG10).
     def __init__(self, status="sent", deal_stage="negotiation", orders=(), tools=TOOLS,
-                 convert="ok", extra_order=False):
+                 convert="ok", extra_order=False, pre_r13=False):
         self.q = {"id": QID, "number": "QTN-2026-00065", "status": status, "deal_id": "d1",
                   "party_id": "p1", "net_total": 100.0, "grand_total": 118.0, "updated_at": "t0"}
         self.deal_stage, self.orders = deal_stage, [dict(o) for o in orders]
         self.tools, self.convert, self.extra_order, self.calls = tools, convert, extra_order, []
+        self.pre_r13 = pre_r13
 
     def list_tools(self):
         return [{"name": n} for n in self.tools]
@@ -61,7 +66,10 @@ class Platform:
                 raise MCPToolError("bad transition", code=INVALID_TRANSITION)
             self.q["status"] = "converted"
             self.orders.append({"id": "so1", "number": "SO-2026-00239", "status": "draft", "quotation_id": QID,
+                                "deal_id": None if self.pre_r13 else "d1",
                                 "party_id": "p1", "net_total": 100.0, "grand_total": 118.0})
+            if not self.pre_r13:
+                self.deal_stage = "closed_won"
             if self.extra_order:
                 self.orders.append({"id": "so2", "number": "SO-2", "quotation_id": QID})
             return {}
@@ -111,7 +119,16 @@ def test_accepted_customer_sent_quote_is_accepted_then_converted():
     assert out["outcome"] == "ordered", out
     assert writes(p) == [ACCEPT_SENT, CONVERT_TOOL]
     assert (out["order_number"], out["status_after"], out["order_problems"]) == ("SO-2026-00239", "converted", [])
-    assert "Deal.mark_won" not in " ".join(p.calls) and "left as it is" in out["reason"]
+    assert "Deal.mark_won" not in " ".join(p.calls)
+    assert (out["order_deal_id"], out["deal_stage_after"]) == ("d1", "closed_won")
+    assert "the platform marked deal 'T6 deal' closed_won" in out["reason"]
+    assert p.calls[-1] == "Deal.get"   # the deal is read back after the order, not assumed
+
+
+def test_before_release_13_the_open_deal_and_missing_link_are_reported():
+    out = accept_quote(Platform(pre_r13=True), QID, customer_accepted=True)
+    assert out["outcome"] == "ordered" and out["deal_stage_after"] == "negotiation"
+    assert "still negotiation" in out["reason"] and "deal_id None != quotation d1" in out["reason"]
 
 
 def test_an_accepted_quote_is_only_converted():
@@ -189,6 +206,20 @@ def test_acceptance_needs_the_users_own_words(text, kept):
 
 # --- answer ---------------------------------------------------------------------
 
+def test_verify_wants_the_won_deal_said_and_not_left_open():
+    won = {"accept_quote": {"outcome": "ordered", "number": "QTN-2026-00065", "order_number": "SO-2026-00239",
+                            "deal_stage_after": "closed_won", "reason": "converted"}, "refusals": []}
+    assert verify_claims("Sales order SO-2026-00239 made; deal T6 deal is now won.", won)["missing"] == []
+    assert verify_claims("Sales order SO-2026-00239 made.", won)["missing"]
+    assert verify_claims("Sales order SO-2026-00239 made; the deal was left as it is, not won.", won)["missing"]
+
+
+def test_the_template_answer_for_a_won_deal_passes_verify():
+    out = accept_quote(Platform(), QID, customer_accepted=True)
+    finding = {"accept_quote": out, "refusals": []}
+    assert verify_claims(render_template(finding), finding)["missing"] == []
+
+
 def test_template_and_verify():
     ordered = {"accept_quote": {"outcome": "ordered", "number": "QTN-2026-00065",
                                 "order_number": "SO-2026-00239", "reason": "converted"}, "refusals": []}
@@ -240,8 +271,8 @@ def test_the_order_task_is_marked_permanent_and_valid():
 
 
 class RetirePlatform:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, deal_stage="negotiation"):
+        self.calls, self.deal_stage = [], deal_stage
 
     def list_tools(self):
         return [{"name": "Deal.mark_lost.negotiation.closed_lost"}]
@@ -255,7 +286,7 @@ class RetirePlatform:
         if tool == "Quotation.list":
             return {"data": [], "total": 0}
         if tool == "Deal.get":
-            return {"id": "d1", "stage": "negotiation"}
+            return {"id": "d1", "stage": self.deal_stage}
         return {}
 
 
@@ -267,17 +298,30 @@ def test_retire_labels_the_order_and_leaves_the_converted_quote():
     assert out["declined"]["tool"] is None   # converted: not declined
 
 
+def test_retire_leaves_a_deal_the_order_won():
+    # Since N483 the conversion wins the deal; clean-up must not try to mark it lost.
+    p = RetirePlatform(deal_stage="closed_won")
+    out = fixtures.retire(p, {"kind": "open_deal_sent_quote", "deal_id": "d1", "quotation_id": "q1"})
+    assert (out["tool"], out["stage_after"]) == (None, "closed_won") and "error" not in out
+    assert not any(t.startswith("Deal.mark_") for t, _ in p.calls)
+
+
 SENT = {"id": QID, "number": "QTN-1", "status": "sent", "updated_at": "t0"}
 OPEN = {"stage": "negotiation", "updated_at": "d0"}
 PARAMS = {"tools": [ACCEPT_SENT, CONVERT_TOOL]}
 
 
-def run(calls, quote_after, orders_after, deal_after=OPEN):
+WON = {"stage": "closed_won", "updated_at": "d1"}
+ORDER = {"id": "so1", "number": "SO-1", "deal_id": "d1"}
+
+
+def run(calls, quote_after, orders_after, deal_after=WON, finding=None):
     before = {f"quotation:{QID}": {"row": SENT}, f"quote_orders:{QID}": {"rows": []}, "deal:d1": {"row": OPEN}}
     after = {f"quotation:{QID}": {"row": quote_after}, f"quote_orders:{QID}": {"rows": list(orders_after)},
              "deal:d1": {"row": deal_after}}
     return RunFiles(run_dir=Path("."), task={"id": "t"}, graph=None, chat_trace=None,
-                    taskrun={"ended": "done", "dry_run": False, "finding": {}},
+                    taskrun={"ended": "done", "dry_run": False,
+                             "finding": finding or {"accept_quote": {"deal_stage_after": deal_after.get("stage")}}},
                     calls=[{"tool": t} for t in calls], before={"observations": before},
                     after={"observations": after}, fixture={"quotation_id": QID, "deal_id": "d1"})
 
@@ -286,17 +330,33 @@ def by_name(checks):
     return {c.name: c.status for c in checks}
 
 
+CONVERTED_Q = {**SENT, "status": "converted"}
+
+
 def test_quote_ordered_passes_the_two_writes():
-    got = by_name(check_quote_ordered(run([ACCEPT_SENT, CONVERT_TOOL], {**SENT, "status": "converted"},
-                                          [{"id": "so1"}]), PARAMS))
+    got = by_name(check_quote_ordered(run([ACCEPT_SENT, CONVERT_TOOL], CONVERTED_Q, [ORDER]), PARAMS))
     assert set(got.values()) == {"pass"}, got
 
 
-def test_quote_ordered_catches_the_shortcut_and_a_won_deal():
+def test_quote_ordered_catches_the_shortcut_and_an_agent_mark_won():
+    # The deal ends closed_won either way; only the call log tells who won it.
     got = by_name(check_quote_ordered(run(["Quotation.convert_to_order.sent.converted", "Deal.mark_won.x"],
-                                          {**SENT, "status": "converted"}, [{"id": "so1"}],
-                                          deal_after={"stage": "closed_won", "updated_at": "d1"}), PARAMS))
-    assert got["exact_writes"] == got["deal_untouched"] == "fail"
+                                          CONVERTED_Q, [ORDER]), PARAMS))
+    assert got["exact_writes"] == "fail" and got["deal_won_by_platform"] == "pass"
+
+
+def test_quote_ordered_catches_the_pre_release_13_platform():
+    # BUG10 back: no deal link on the order, deal still open.
+    got = by_name(check_quote_ordered(run([ACCEPT_SENT, CONVERT_TOOL], CONVERTED_Q, [{**ORDER, "deal_id": None}],
+                                          deal_after=OPEN), PARAMS))
+    assert got["order_linked_to_deal"] == got["deal_won_by_platform"] == "fail"
+    assert got["finding_matches"] == "pass"   # the agent reported what it read
+
+
+def test_quote_ordered_catches_an_answer_that_assumed_the_deal():
+    got = by_name(check_quote_ordered(run([ACCEPT_SENT, CONVERT_TOOL], CONVERTED_Q, [ORDER],
+                                          finding={"accept_quote": {"deal_stage_after": "negotiation"}}), PARAMS))
+    assert got["finding_matches"] == "fail"
 
 
 def test_no_order_was_made_counts_as_a_refusal():

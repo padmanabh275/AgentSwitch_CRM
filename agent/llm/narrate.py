@@ -57,7 +57,8 @@ and why, in the words of its reason; for "would_advance", say it was a dry \
 run and nothing was written.
 - If accept_quote is present and not "not_requested": for "ordered", give the \
 quotation number, the sales order number (order_number) and that it was made \
-from the accepted quotation, and say the deal was left as it is; for \
+from the accepted quotation, and say what the deal is now (deal_stage_after: \
+the platform marks it closed_won when the order is made; you never did); for \
 "refused", say no order was made and why, in the words of its reason; for \
 "would_order", say it was a dry run and nothing was written.
 - For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \

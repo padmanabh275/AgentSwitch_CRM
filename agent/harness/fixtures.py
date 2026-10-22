@@ -26,6 +26,14 @@ Kinds (task field "fixture"):
                           sent; it takes only the id). The platform still
                           offers convert_to_order.sent.converted, so only
                           the agent stands between this quote and an order.
+  open_deal_pending_quote the unpriced kind, plus the harness's own unpriced
+                          Quotation for the item and qty (no rate, possible
+                          since Release 13, N480), submitted for margin
+                          approval: it sits in `pending_approval`. The
+                          agent is then asked for the same quote again, and
+                          must not put a second one in the approver's queue.
+                          Clean-up revises it back to draft like the
+                          agent's own.
   new_lead                a Lead at `new`, nothing else: no contact, no
                           qualify, no deal. The stage-skipping shortcuts
                           (Lead.convert.new.*, Lead.qualify.new.*) were
@@ -36,9 +44,9 @@ Kinds (task field "fixture"):
                           convert it. Lead.convert makes the deal itself.
   qualified_lead_with_deal the qualified kind plus a deal made with
                           Lead.make.Deal, which leaves the lead `qualified`.
-                          Converting it now would make a second deal
-                          (platform bug, drafts/BUG8), so the agent must
-                          refuse.
+                          Converting it made a second deal until Release 13
+                          (drafts/BUG8); now (N482) it links this one, so
+                          the agent converts and checks the deal is kept.
   new_deal                a deal at `new`, made by the normal path (lead
                           contacted, qualified, Lead.make.Deal) and not
                           moved further. Deal.mark_won.new.closed_won was
@@ -47,8 +55,14 @@ Kinds (task field "fixture"):
                           proposal and negotiation.
 
 Interference (task field "interference"), applied by the runner while
-the agent waits at harness/gate.py's "before_quotation_write" gate:
-  close_deal_before_write moves the fixture deal to closed_lost
+the agent waits at a harness/gate.py gate (INTERFERENCE_GATES):
+  close_deal_before_write moves the fixture deal to closed_lost, at
+                          "before_quotation_write"
+  close_deal_before_order the same change, at "before_order_write": the
+                          agent has read the quotation and its open deal
+                          and is about to accept and convert it. Since
+                          Release 13 (N483) converting wins the deal, so
+                          an order made now would flip a lost deal to won.
 
 After the after-read, retire() takes our quotations on the fixture deal
 out of the margin-approval queue (revise_quote: pending_approval -> draft),
@@ -75,13 +89,16 @@ from domain.deals import OPEN_STAGES
 from harness.batch_client import memo
 from transport.mcp_client import TRANSIENT, MCPToolError
 
-FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
+FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_pending_quote",
+                 "open_deal_draft_quote",
                  "open_deal_sent_quote", "new_lead", "qualified_lead", "qualified_lead_with_deal",
                  "new_deal")
 QUOTE_KINDS = ("open_deal_draft_quote", "open_deal_sent_quote")
 LEAD_KINDS = ("new_lead", "qualified_lead", "qualified_lead_with_deal")
 OPEN_LEAD_STATUSES = ("new", "contacted", "qualified")
-INTERFERENCE_KINDS = ("close_deal_before_write",)
+INTERFERENCE_GATES = {"close_deal_before_write": "before_quotation_write",
+                      "close_deal_before_order": "before_order_write"}
+INTERFERENCE_KINDS = tuple(INTERFERENCE_GATES)
 FIXTURE_QTY = 500
 ITEM_PAGE = 50
 ITEM_MAX_PAGES = 20
@@ -214,6 +231,8 @@ def create(client, kind: str, run_id: str) -> dict:
         if deal.get("stage") != "negotiation":
             raise RuntimeError(f"fixture: deal {deal['id']} ended at {deal.get('stage')!r}, not negotiation")
         quote = _draft_quote(client, deal, item, title) if draft_quote else {}
+        if kind == "open_deal_pending_quote":
+            quote = _pending_quote(client, deal, item, title)
         if kind == "open_deal_sent_quote":
             quote = _send_quote(client, quote)
     except Exception:
@@ -323,6 +342,24 @@ def _draft_quote(client, deal: dict, item: dict, title: str) -> dict:
     row = _unwrap(_read(client, "Quotation.get", {"id": created["id"]}))
     if row.get("status") != "draft":
         raise RuntimeError(f"fixture: quotation {row.get('id')} is {row.get('status')!r}, not draft")
+    return {"quotation_id": row["id"], "quotation_number": row.get("number"),
+            "quotation_status": row["status"], "quotation_updated_at": row.get("updated_at")}
+
+
+def _pending_quote(client, deal: dict, item: dict, title: str) -> dict:
+    """An unpriced Quotation on the fixture deal (no rate on the line), moved
+    draft -> pending_approval and read back."""
+    created = _unwrap(client.call("Quotation.create", {
+        "party_id": deal["party_id"], "company_id": deal["company_id"], "deal_id": deal["id"],
+        "items": [{"item_id": item["id"], "qty": FIXTURE_QTY,
+                   "description": "harness fixture line, no rate (priced at margin approval)"}],
+        "notes": f"{title}: harness fixture, an unpriced quotation waiting for margin approval; "
+                 "not an offer"}))
+    client.call("Quotation.submit_for_margin_approval.draft.pending_approval", {"id": created["id"]})
+    row = _unwrap(_read(client, "Quotation.get", {"id": created["id"]}))
+    if row.get("status") != "pending_approval":
+        raise RuntimeError(f"fixture: quotation {row.get('id')} is {row.get('status')!r} after "
+                           "submit_for_margin_approval, not pending_approval")
     return {"quotation_id": row["id"], "quotation_number": row.get("number"),
             "quotation_status": row["status"], "quotation_updated_at": row.get("updated_at")}
 

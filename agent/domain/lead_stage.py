@@ -12,12 +12,15 @@ request, as domain/deal_stage.py does for deals:
 
 Converting uses Lead.convert, not Lead.make.Deal. Probed live 2026-10-21:
 Lead.convert marks the lead converted *and* creates its deal ("Deal from
-<party>"); Lead.make.Deal creates a deal but leaves the lead qualified, and
-a later Lead.convert then creates a second deal for the same lead. So before
-converting, the lead's existing deals are read (Deal.list by lead_id,
-checked here too), and a lead that already has one is refused rather than
-given a duplicate. After converting, the lead is read back as converted and
-its deal is found.
+<party>"); Lead.make.Deal creates a deal but leaves the lead qualified.
+Until Release 13 a later Lead.convert then created a second deal for the
+same lead (drafts/BUG8); since Release 13 (N482) it links the deal the lead
+already has. So before converting, the lead's existing deals are read
+(Deal.list by lead_id, checked here too): with one, the convert must link
+it; with more than one, which to link is ambiguous and the convert is
+refused. After converting, the lead is read back as converted with exactly
+one deal, the same one it had if it had one; a second deal is reported as
+an error, never as success.
 
 The write is never retried (registry: retries=0).
 """
@@ -90,14 +93,14 @@ def advance_lead(client: MCPClient, lead_ref: str, target: str | None = None,
         return {**base, "outcome": "refused", "reason": f"lead {ref} was not moved: {why}"}
     nxt, tool = step
     base.update(next_status=nxt, tool=tool)
+    existing: list[dict] = []
     if nxt == "converted":
         existing = lead_deals(client, lead["id"])
-        if existing:
-            base["existing_deals"] = existing
+        base["existing_deals"] = existing
+        if len(existing) > 1:
             return {**base, "outcome": "refused",
-                    "reason": (f"lead {ref} was not converted: it already has deal "
-                               f"{existing[0]['title']!r}, and converting creates another one "
-                               "(the platform makes a deal on convert)")}
+                    "reason": (f"lead {ref} was not converted: it already has {len(existing)} deals, "
+                               "and converting links one of them; say which deal is the lead's")}
     if tool not in {t.get("name") for t in client.list_tools()}:
         return {**base, "outcome": "refused",
                 "reason": f"lead {ref} was not moved: no {tool} in this seat's catalogue"}
@@ -127,6 +130,11 @@ def advance_lead(client: MCPClient, lead_ref: str, target: str | None = None,
         if len(deals) != 1:
             return {**out, "outcome": "error",
                     "reason": f"lead {ref} reads back as converted, but has {len(deals)} deal(s), not 1"}
-        out.update(deal_id=deals[0]["id"], deal_title=deals[0]["title"],
-                   reason=out["reason"] + f"; it created deal {deals[0]['title']!r}")
+        if existing and deals[0]["id"] != existing[0]["id"]:
+            return {**out, "outcome": "error",
+                    "reason": (f"lead {ref} reads back as converted, but its deal is now "
+                               f"{deals[0]['title']!r}, not the deal it had ({existing[0]['title']!r})")}
+        out.update(deal_id=deals[0]["id"], deal_title=deals[0]["title"], deal_linked=bool(existing),
+                   reason=out["reason"] + (f"; it linked the deal it already had, {deals[0]['title']!r}"
+                                           if existing else f"; it created deal {deals[0]['title']!r}"))
     return out

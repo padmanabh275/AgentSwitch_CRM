@@ -36,7 +36,8 @@ given (it must be the next step). Converting creates the lead's deal.
 
 --order-quote: turn that quotation (number or id) into a sales order. An
 accepted one is converted; a sent one only with --customer-accepted (it is
-accepted first). The deal is left as it is.
+accepted first). The platform then marks the deal won (Release 13); the
+agent never does that itself, and reports the deal as it reads back.
 
 --today: pin the date "this month" and "overdue" are judged against, for
 reproducible runs (the deal data itself is still live).
