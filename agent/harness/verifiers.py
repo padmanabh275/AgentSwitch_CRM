@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -47,6 +48,8 @@ MAX_PAGES = 40
 LIST_LIMIT = 10   # ids shown per mismatch list in a check's detail
 OBSERVE_ATTEMPTS = 3
 OBSERVE_BACKOFF_S = 1.0
+# Observations are independent reads, ~1.6s per call: run them side by side.
+OBSERVE_WORKERS = 8
 
 
 # ---------------------------------------------------------------- observe
@@ -220,8 +223,14 @@ def observe(client, key: str) -> dict:
 
 
 def observe_all(client, keys: list[str]) -> dict:
-    return {"observed_at": dt.datetime.now(IST).isoformat(),
-            "observations": {k: observe(client, k) for k in keys}}
+    """Every observation, read in parallel; the result keeps `keys` order."""
+    observed_at = dt.datetime.now(IST).isoformat()
+    if len(keys) <= 1:
+        results = [observe(client, k) for k in keys]
+    else:
+        with ThreadPoolExecutor(max_workers=min(OBSERVE_WORKERS, len(keys))) as pool:
+            results = list(pool.map(lambda k: observe(client, k), keys))
+    return {"observed_at": observed_at, "observations": dict(zip(keys, results))}
 
 
 # ---------------------------------------------------------------- run files

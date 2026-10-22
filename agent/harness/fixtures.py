@@ -72,6 +72,7 @@ from __future__ import annotations
 import time
 
 from domain.deals import OPEN_STAGES
+from harness.batch_client import memo
 from transport.mcp_client import TRANSIENT, MCPToolError
 
 FIXTURE_KINDS = ("open_deal_priced_item", "open_deal_unpriced_item", "open_deal_draft_quote",
@@ -121,6 +122,11 @@ def _tool_names(client) -> set[str]:
 
 
 def _all_items(client) -> list[dict]:
+    """Every item, paged. Fetched once per batch (harness/batch_client.py)."""
+    return memo(client, "fixtures:items", lambda: _page_items(client))
+
+
+def _page_items(client) -> list[dict]:
     rows, offset = [], 0
     for _ in range(ITEM_MAX_PAGES):
         page = _read(client, "Item.list", {"limit": ITEM_PAGE, "offset": offset})
@@ -172,7 +178,8 @@ def _priced_item(client) -> dict:
 def create(client, kind: str, run_id: str) -> dict:
     if kind not in FIXTURE_KINDS:
         raise ValueError(f"unknown fixture {kind!r}; expected one of {FIXTURE_KINDS}")
-    party = (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0]
+    party = memo(client, "fixtures:party",
+                 lambda: (_read(client, "Party.list", {"limit": 1}).get("data") or [None])[0])
     if not party:
         raise RuntimeError("fixture: Party.list returned nothing")
     if kind in LEAD_KINDS:

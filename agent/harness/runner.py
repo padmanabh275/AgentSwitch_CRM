@@ -38,6 +38,7 @@ from pathlib import Path
 
 from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
 from harness import fixtures, gate, verifiers
+from harness.batch_client import BatchClient
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
 from transport.mcp_client import BUDGET_EXHAUSTED, client_from_env, instance_from_env
@@ -240,7 +241,7 @@ def run_batch(data: dict, tasks: list[dict], write: bool = False, skip_llm: bool
                 "tasks_file": str(tasks_file), "runs": []}
     write_json(batch_dir / "manifest.json", manifest)
 
-    client = client_from_env(load_env())
+    client = BatchClient(client_from_env(load_env()))
     print(f"[batch {batch_id}] {data.get('instance') or 'unknown instance'}, "
           f"{len(tasks)} task(s), {'WRITE' if write else 'dry run'}, "
           f"today pinned to {data['today']}, LLM gateway {'up' if llm_up else 'down'}", flush=True)
