@@ -37,7 +37,7 @@ import urllib.request
 from pathlib import Path
 
 from config import AGENT_DIR, REPO_DIR, RUNS_DIR, load_env
-from harness import fixtures, gate, verifiers
+from harness import fixtures, gate, task_keys, verifiers
 from harness.batch_client import BatchClient
 from harness.run_record import read_json, write_json
 from transport.llm_client import backend_url
@@ -89,6 +89,7 @@ def load_tasks(path: Path = TASKS_PATH, instance: str | None = None) -> dict:
     data = read_json(path)
     if data.get("format") != TASKS_FORMAT:
         raise SystemExit(f"{path}: unsupported format {data.get('format')!r}")
+    task_keys.check_file_keys(path, data)
     ids = [t["id"] for t in data["tasks"]]
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     if dupes:
