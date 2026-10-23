@@ -125,8 +125,9 @@ REGISTRY: dict[str, NodeDef] = {
         description="File (or reuse) an escalation for an unpriced quote.",
         writes=True),
     "get_deal": NodeDef(
-        fn=lambda ctx, a, o: quotations.read_open_deal(ctx.client, a["deal_id"]),
-        description="Deal.get; refuses if it doesn't exist or isn't open.",
+        fn=lambda ctx, a, o: (quotations.read_open_deal_ref(ctx.client, a["deal_ref"]) if a.get("deal_ref")
+                              else quotations.read_open_deal(ctx.client, a["deal_id"])),
+        description="Deal.get (or the deal by exact title); refuses if it doesn't exist or isn't open.",
         retries=2),
     "create_quotation": NodeDef(
         fn=_create_quotation,

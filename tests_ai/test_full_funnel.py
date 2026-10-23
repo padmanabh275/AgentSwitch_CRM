@@ -65,10 +65,10 @@ def test_a_step_is_a_task_of_its_own():
 @pytest.mark.parametrize("change, match", [
     ({"argv": ["x"]}, "no argv or interference"),
     ({"fixture": None}, "needs a fixture"),
-    ({"steps": [{"name": "a", "argv": []}, {"name": "a", "argv": []}]}, "its own name"),
+    ({"steps": [{"name": "a", "argv": ["Move deal x forward."]}, {"name": "a", "argv": ["Move deal x forward."]}]}, "its own name"),
     ({"steps": [{"name": "a", "harness": "approve_everything"}]}, "hand-off"),
-    ({"steps": [{"name": "a", "argv": [], "interference": "close_deal_before_write"}]}, "takes only"),
-    ({"steps": [{"name": "a", "argv": [], "verifiers": [{"name": "no_such"}]}]}, "unknown verifier"),
+    ({"steps": [{"name": "a", "argv": ["Move deal x forward."], "interference": "close_deal_before_write"}]}, "takes only"),
+    ({"steps": [{"name": "a", "argv": ["Move deal x forward."], "verifiers": [{"name": "no_such"}]}]}, "unknown verifier"),
 ])
 def test_bad_steps_are_rejected(change, match):
     with pytest.raises(ValueError, match=match):
@@ -121,11 +121,11 @@ def test_the_funnel_runs_each_step_with_what_the_last_one_made(harness, tmp_path
     out = runner.run_task(None, FUNNEL, "r1", "2026-10-22", True, run_dir, 600)
     assert out["exit_code"] == 0 and out["steps"] == 9
     argv = harness["argv"]
-    assert argv["contact"] == ["--advance-lead", "l1", "--to-status", "contacted"]
-    assert argv["deal_qualification"] == ["--advance", "d1", "--to-stage", "qualification"]
-    assert argv["quote"] == ["--asks", "quote", "--item", "i1", "--qty", "500", "--deal", "d1"]
+    assert argv["contact"] == ["We've spoken to lead l1. Mark it as contacted."]
+    assert argv["deal_qualification"] == ["Move deal d1 forward to qualification."]
+    assert argv["quote"] == ["Quote 500 units of i1 on deal d1."]
     # the order step gets the person's quote, which the hand-off put in the state
-    assert argv["order"] == ["--order-quote", "QTN-2", "--customer-accepted"]
+    assert argv["order"] == ["The customer has accepted quotation QTN-2. Make the sales order."]
     assert harness["handoff"][0] == "quote_at_list_price" and harness["handoff"][1]["quotation_id"] == "q1"
     # each step has its own record, with the state it started from
     step = tmp_path / "r1.7-quote"

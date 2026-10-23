@@ -33,6 +33,9 @@ whether it was answered, escalated, refused, not requested, or failed, and why.
 deals have no close date (open_without_close_date_ids) — they can't be judged.
 - For a quoted quote, give the unit BOM price, quantity and total, and say \
 it's before tax and discounts.
+- For a refused quote, say plainly that you can't quote it ("I can't quote \
+...") and why, in the words of its reason. Only then may you ask for what's \
+missing (e.g. which item); never answer with just a question.
 - For an escalated quote, say why there's no BOM price, in the words of its reason. If bom_price_redacted \
 is true, the price exists but is hidden from this seat: never say it isn't set. Say that no price was \
 invented, give the escalation number \

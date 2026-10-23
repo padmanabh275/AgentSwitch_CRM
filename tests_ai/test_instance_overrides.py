@@ -14,11 +14,11 @@ from transport.mcp_client import KEYSTONE, SURYODAYA, instance_from_env
 
 TASK = {
     "id": "quote_x",
-    "argv": ["--asks", "quote", "--item", "ST-VICE-150", "--qty", "500"],
-    "requires_llm": False,
+    "argv": ["Quote 500 units of ST-VICE-150."],
+    "requires_llm": True,
     "verifiers": [{"name": "quote_matches_db", "params": {"ref": "ST-VICE-150", "qty": 500}}],
     "by_instance": {"keystone": {
-        "argv": ["--asks", "quote", "--item", "FG-HYD-0400", "--qty", "500"],
+        "argv": ["Quote 500 units of FG-HYD-0400."],
         "verifiers": [{"name": "quote_matches_db", "params": {"ref": "FG-HYD-0400", "qty": 500}}],
     }},
 }
@@ -38,10 +38,10 @@ def test_instance_from_env(env, want):
 
 def test_override_replaces_fields_on_its_instance():
     t = runner.for_instance(TASK, "keystone")
-    assert "FG-HYD-0400" in t["argv"]
+    assert "FG-HYD-0400" in t["argv"][0]
     assert t["verifiers"][0]["params"]["ref"] == "FG-HYD-0400"
     assert t["instance"] == "keystone" and "by_instance" not in t
-    assert t["requires_llm"] is False
+    assert t["requires_llm"] is True
 
 
 @pytest.mark.parametrize("instance", ["suryodaya", None])
@@ -71,5 +71,5 @@ def test_real_task_file_loads_for_each_instance(instance):
         assert "by_instance" not in t
         # a quote task's request and its check name the same item
         refs = [s["params"]["ref"] for s in t.get("verifiers") or [] if s["name"] == "quote_matches_db"]
-        if refs and "--item" in t["argv"]:
-            assert t["argv"][t["argv"].index("--item") + 1] == refs[0], t["id"]
+        if refs and refs[0] and t.get("argv"):
+            assert refs[0] in t["argv"][0], t["id"]

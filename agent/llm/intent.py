@@ -47,6 +47,10 @@ SCHEMA = {
             "type": "integer",
             "description": "Units to quote, only if the user states a number. 0 if not stated.",
         },
+        "quote_deal_ref": {
+            "type": "string",
+            "description": "The deal the quote should be put on as a quotation, exactly as written (id or title). Empty if the user named no deal for the quote.",
+        },
         "out_of_scope": {
             "type": "array",
             "items": {
@@ -91,7 +95,7 @@ SCHEMA = {
             "description": "An in-scope request the agent can do that isn't one of the asks: looking up one deal or lead. Empty if none.",
         },
     },
-    "required": ["asks", "item_ref", "qty", "out_of_scope", "advance_deal", "advance_lead",
+    "required": ["asks", "item_ref", "qty", "quote_deal_ref", "out_of_scope", "advance_deal", "advance_lead",
                  "accept_quote", "other"],
 }
 
@@ -99,7 +103,7 @@ SYSTEM_PROMPT = """You classify requests sent to the Pipeline/Sales agent of \
 Suryodaya Precision Works. Do not answer the request; only classify it.
 
 The agent can do only these things: answer its three standard questions, \
-look up one deal or lead, move one open deal forward a stage in the funnel \
+put a quote on a deal as a quotation, look up one deal or lead, move one open deal forward a stage in the funnel \
 (new -> qualification -> proposal -> negotiation), move one open lead \
 forward a step (new -> contacted -> qualified -> converted into a deal), \
 turn a quotation the customer accepted into a sales order, and escalate to \
@@ -119,6 +123,9 @@ Fill the fields:
 Never invent one; empty if the user didn't name an item.
 - qty: for a quote, the number of units only if stated. Never assume a \
 default; 0 if not stated.
+- quote_deal_ref: for a quote the user wants put on a deal ("quote 500 X \
+on deal Y", "add a quotation for X to deal Y"), the deal exactly as written \
+(id or title). Empty if no deal was named for the quote.
 - out_of_scope: every part the agent must refuse, with a short reason each: \
 (a) not a sales agent's job at all, e.g. payroll, salaries or commissions, \
 HR, accounting, or a discount beyond policy; (b) an action the agent has no \
@@ -192,6 +199,14 @@ def validate(raw: dict) -> dict:
     item_ref = (raw.get("item_ref") or "").strip() or None
     qty = raw.get("qty")
     qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else None
+    # item_ref and qty are only filled for a quote. Live 2026-10-23, gemma3:12b
+    # (via glc's ollama) gave "Quote 500 units of X" both but left asks empty,
+    # which routed the quote to the chat loop. Both together mean a quote.
+    quote_inferred = bool(item_ref and qty and "quote" not in asks)
+    if quote_inferred:
+        asks = [a for a in ASKS if a in asks or a == "quote"]
+    # A deal only means something on a quote: without the ask it would write nothing.
+    quote_deal_ref = (str(raw.get("quote_deal_ref") or "").strip() or None) if "quote" in asks else None
     out_of_scope = [
         {"request": str(o.get("request", "")).strip(), "reason": str(o.get("reason", "")).strip()}
         for o in (raw.get("out_of_scope") or []) if isinstance(o, dict) and o.get("request")
@@ -203,10 +218,14 @@ def validate(raw: dict) -> dict:
     out_of_scope += refused
     accept_quote = _accept_quote(raw.get("accept_quote"))
 
-    return {"route": _route(asks, out_of_scope, other, advance, advance_lead, accept_quote),
-            "asks": asks, "item_ref": item_ref, "qty": qty, "out_of_scope": out_of_scope,
-            "advance": advance, "advance_lead": advance_lead, "accept_quote": accept_quote,
-            "other": other}
+    out = {"route": _route(asks, out_of_scope, other, advance, advance_lead, accept_quote),
+           "asks": asks, "item_ref": item_ref, "qty": qty, "quote_deal_ref": quote_deal_ref,
+           "out_of_scope": out_of_scope,
+           "advance": advance, "advance_lead": advance_lead, "accept_quote": accept_quote,
+           "other": other}
+    if quote_inferred:
+        out["quote_inferred"] = "the model named an item and a quantity but no quote ask"
+    return out
 
 
 def _accept_quote(raw) -> dict | None:
@@ -320,7 +339,7 @@ def record_no_tool(intent: dict, text: str, *, keep_route: bool = False) -> dict
 def classifier_fallback(error: str) -> dict:
     """The intent to run with when classification failed: the chat loop, with
     nothing pre-decided. `classifier_error` keeps the reason on the record."""
-    return {"route": "chat", "asks": [], "item_ref": None, "qty": None,
+    return {"route": "chat", "asks": [], "item_ref": None, "qty": None, "quote_deal_ref": None,
             "out_of_scope": [], "advance": None, "advance_lead": None, "accept_quote": None,
             "other": None, "classifier_error": error}
 

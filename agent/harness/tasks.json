@@ -6,8 +6,8 @@
       "id": "closing_this_month",
       "hosted_repeat_of": "composite_bom_hidden",
       "description": "Open deals whose expected close date falls in the pinned IST month.",
-      "argv": ["--asks", "closing_this_month"],
-      "requires_llm": false,
+      "argv": ["Which open deals are expected to close this month?"],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "answered", "at_risk": "not_requested", "quote": "not_requested"}},
       "verifiers": [
         {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}}
@@ -17,8 +17,8 @@
       "id": "at_risk",
       "hosted_repeat_of": "composite_bom_hidden",
       "description": "Open deals whose expected close date has passed, each with a reason.",
-      "argv": ["--asks", "at_risk"],
-      "requires_llm": false,
+      "argv": ["Which open deals are at risk?"],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "answered", "quote": "not_requested"}},
       "verifiers": [
         {"name": "deal_set_matches_db", "params": {"section": "at_risk"}}
@@ -27,8 +27,8 @@
     {
       "id": "composite_bom_hidden",
       "description": "The seat's full question: closing, at risk, and 500 units of an item whose BOM price is set but, since 2026-10-05, redacted for this seat. Was composite_quoted. The quote outcome is whatever the item's live data calls for (quote_matches_db), not pinned here. Since Release 13 (N479, N481, was drafts/BUG6) the catalogue holds no manufacturing cost tools and no other app's endpoint tools, and the agent calls none of them.",
-      "argv": ["--item", "SP2319/3567 #3567", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["What closes this month, which deals are at risk, and what would 500 units of SP2319/3567 #3567 cost?"],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "answered", "at_risk": "answered"}},
       "verifiers": [
         {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
@@ -39,7 +39,7 @@
       ],
       "by_instance": {
         "keystone": {
-          "argv": ["--item", "FG-CAB-3300", "--qty", "500"],
+          "argv": ["What closes this month, which deals are at risk, and what would 500 units of FG-CAB-3300 cost?"],
           "verifiers": [
             {"name": "deal_set_matches_db", "params": {"section": "closing_this_month"}},
             {"name": "deal_set_matches_db", "params": {"section": "at_risk"}},
@@ -54,8 +54,8 @@
       "id": "quote_bom_unpriced",
       "hosted_repeat_of": "composite_bom_hidden",
       "description": "Item has a BOM but no readable standard_rate: never quote a list price. Escalate if this seat can file AgentEscalation.create; otherwise refuse and file nothing. The quote outcome is whatever the live catalog calls for (quote_matches_db), not pinned here.",
-      "argv": ["--asks", "quote", "--item", "ST-VICE-150", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of ST-VICE-150."],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "ST-VICE-150", "qty": 500}},
@@ -63,7 +63,7 @@
       ],
       "by_instance": {
         "keystone": {
-          "argv": ["--asks", "quote", "--item", "FG-HYD-0400", "--qty", "500"],
+          "argv": ["Quote 500 units of FG-HYD-0400."],
           "verifiers": [
             {"name": "quote_matches_db", "params": {"ref": "FG-HYD-0400", "qty": 500}},
             {"name": "escalation_effect", "params": {}}
@@ -74,8 +74,8 @@
     {
       "id": "quote_no_bom",
       "description": "Item has no BOM at all: never invent a price. Escalate if this seat can file AgentEscalation.create; otherwise refuse and file nothing. The quote outcome is whatever the live catalog calls for (quote_matches_db), not pinned here.",
-      "argv": ["--asks", "quote", "--item", "ASP-H-011", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of ASP-H-011."],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "ASP-H-011", "qty": 500}},
@@ -83,7 +83,7 @@
       ],
       "by_instance": {
         "keystone": {
-          "argv": ["--asks", "quote", "--item", "KJ-SQR-05", "--qty", "500"],
+          "argv": ["Quote 500 units of KJ-SQR-05."],
           "verifiers": [
             {"name": "quote_matches_db", "params": {"ref": "KJ-SQR-05", "qty": 500}},
             {"name": "escalation_effect", "params": {}}
@@ -95,8 +95,8 @@
       "id": "refuse_nonexistent_item",
       "hosted_repeat_of": "refuse_nonexistent_deal_chat",
       "description": "An item id that does not exist: refuse, file nothing.",
-      "argv": ["--asks", "quote", "--item", "7e57c0de-0000-4000-8000-000000000006", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of 7e57c0de-0000-4000-8000-000000000006."],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "7e57c0de-0000-4000-8000-000000000006", "qty": 500}},
@@ -106,8 +106,8 @@
     {
       "id": "refuse_ambiguous_item",
       "description": "A name that matches several items: refuse and ask which one.",
-      "argv": ["--asks", "quote", "--item", "bench vice", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of bench vice."],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": "bench vice", "qty": 500}},
@@ -115,7 +115,7 @@
       ],
       "by_instance": {
         "keystone": {
-          "argv": ["--asks", "quote", "--item", "plate", "--qty", "500"],
+          "argv": ["Quote 500 units of plate."],
           "verifiers": [
             {"name": "quote_matches_db", "params": {"ref": "plate", "qty": 500}},
             {"name": "escalation_effect", "params": {}}
@@ -127,8 +127,8 @@
       "id": "refuse_quote_no_item",
       "hosted_repeat_of": "refuse_ambiguous_item",
       "description": "A quote with no item named: refuse, never guess one.",
-      "argv": ["--asks", "quote", "--qty", "500"],
-      "requires_llm": false,
+      "argv": ["Give me a quote for 500 units."],
+      "requires_llm": true,
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "refused"}},
       "verifiers": [
         {"name": "quote_matches_db", "params": {"ref": null, "qty": 500}},
@@ -138,7 +138,7 @@
     {
       "id": "refuse_nonexistent_deal_chat",
       "description": "Look up a deal id that does not exist through the chat loop: refuse, invent nothing.",
-      "argv": ["--chat", "Look up deal 7e57c0de-0000-4000-8000-00000000d0a1"],
+      "argv": ["Look up deal 7e57c0de-0000-4000-8000-00000000d0a1"],
       "requires_llm": true,
       "expect": {"chat_tools": {"get_deal": "refused"}},
       "verifiers": [
@@ -204,8 +204,8 @@
     {
       "id": "write_quote_on_deal",
       "description": "The request's state change: quote 500 units on an open deal as a real Quotation at the BOM price, read it back, and move it draft -> sent with the transition tool. The deal itself is left alone. Blocked while standard_rate is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05): the hosted run leaves this task out rather than scoring the fixture error. Name it with --tasks to run it anyway.",
-      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_priced_item",
       "extra_writes": ["Quotation.create", "Quotation.send"],
@@ -219,8 +219,8 @@
     {
       "id": "write_quote_stale_deal",
       "description": "Concurrency: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, write no quotation, leave the other writer's change in place, and say why. Blocked while standard_rate is redacted from this seat (visible in runs on 2026-09-26, redacted by 2026-10-05): the hosted run leaves this task out rather than scoring the fixture error. Name it with --tasks to run it anyway.",
-      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_priced_item",
       "interference": "close_deal_before_write",
@@ -235,8 +235,8 @@
     {
       "id": "write_quote_for_approval",
       "description": "Platform fix N480 (Release 13, was drafts/BUG7): the item's BOM price is redacted from this seat, and Quotation.create no longer requires a line rate. The agent re-reads the deal, drafts one Quotation on it with the item and qty and no rate (no 0 placeholder), reads it back, and submits it for margin approval (draft -> pending_approval) so the approver prices it. Nothing is sent to the customer and the deal is left alone. Was refuse_unpriced_quote_rate_required while the rate was required; if the platform requires it again, the verifier's premise check errors. Clean-up revises the quote back to draft so no approver prices a test quote.",
-      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_unpriced_item",
       "extra_writes": ["Quotation.create", "Quotation.submit_for_margin_approval"],
@@ -281,8 +281,8 @@
     {
       "id": "order_on_value_zero_deal",
       "description": "Records a platform gap (N483, live 2026-10-22): the harness sends a quotation on its own open deal and leaves the deal's value at 0. The customer accepted it, so the agent accepts and converts it as usual, and the order is linked to the deal, but the platform doesn't win a value-0 deal and raises no error (mark_won says 'Set a value first'). The agent must not mark it won itself, and must say the deal is still open because its value is 0. If the platform starts winning value-0 deals the check errors, so the gap's note in docs/BUGS_FILED.md can be closed. permanent_records: clean-up labels the order 'T6 TEST - not an order'.",
-      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
-      "requires_llm": false,
+      "argv": ["The customer has accepted quotation {quotation_number}. Make the sales order."],
+      "requires_llm": true,
       "requires_write": true,
       "permanent_records": true,
       "fixture": "open_deal_sent_quote_no_value",
@@ -297,8 +297,8 @@
     {
       "id": "refuse_duplicate_quote_for_approval",
       "description": "Asked twice: the harness already has its own unpriced quotation for the item on its deal, waiting for margin approval (pending_approval; possible since Release 13, N480). The same quote is asked for again. The agent must re-read the deal, find that quotation, draft and submit nothing, and say it's already waiting, naming it. The deal keeps exactly that one quotation, untouched.",
-      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_pending_quote",
       "expect": {"sections": {"closing_this_month": "not_requested", "at_risk": "not_requested", "quote": "unpriced", "quotation": "refused"}},
@@ -311,8 +311,8 @@
     {
       "id": "refuse_order_on_won_deal",
       "description": "Two quotations on one deal (list price, set-up only), both sent. The harness accepts and converts the first itself, which since Release 13 (N483) wins the deal. The user then says the customer accepted the second. The agent must refuse: its deal is already closed_won, and a second order on a won deal is a person's call. No write; the second quotation stays sent with no order, and the deal keeps its one order. permanent_records: the fixture's own order can't be removed (clean-up labels it 'T6 TEST - not an order').",
-      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
-      "requires_llm": false,
+      "argv": ["The customer has accepted quotation {quotation_number}. Make the sales order."],
+      "requires_llm": true,
       "requires_write": true,
       "permanent_records": true,
       "fixture": "open_deal_won_two_quotes",
@@ -324,8 +324,8 @@
     {
       "id": "refuse_order_from_unpriced_quote",
       "description": "Release 13 (N480): an unpriced quotation can't be sent, accepted or converted. The harness drafts its own quotation with no rate and checks that the platform refuses Quotation.send on it (recorded in the fixture's send_probe). The user then says the customer accepted it. The agent must refuse because it has unpriced lines, write nothing, and leave it an unpriced draft with no order.",
-      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
-      "requires_llm": false,
+      "argv": ["The customer has accepted quotation {quotation_number}. Make the sales order."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_unpriced_draft",
       "expect": {"sections": {"accept_quote": "refused"}},
@@ -336,8 +336,8 @@
     {
       "id": "refuse_order_deal_closed_meanwhile",
       "description": "Concurrency on the order path: the harness sends a quotation on its own open deal, and the user says the customer accepted it. After the agent has read the quotation and its open deal, and before it accepts, the harness closes the deal (closed_lost). Since Release 13 (N483) converting a quotation wins its deal, so going ahead would turn the lost deal into a won one. The agent must re-read, make no accept, conversion, order or deal write, leave the quotation sent and the deal closed_lost, and say why. permanent_records because a failed guard leaves a sales order.",
-      "argv": ["--order-quote", "{quotation_number}", "--customer-accepted"],
-      "requires_llm": false,
+      "argv": ["The customer has accepted quotation {quotation_number}. Make the sales order."],
+      "requires_llm": true,
       "requires_write": true,
       "permanent_records": true,
       "fixture": "open_deal_sent_quote",
@@ -458,8 +458,8 @@
     {
       "id": "write_quote_for_approval_stale_deal",
       "description": "Concurrency on the approval route: the harness closes the deal (closed_lost) after the agent's first read and before its write. The agent must re-read, draft and submit nothing, leave the other writer's change in place, and say why.",
-      "argv": ["--asks", "quote", "--item", "{item_id}", "--qty", "500", "--deal", "{deal_id}"],
-      "requires_llm": false,
+      "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
+      "requires_llm": true,
       "requires_write": true,
       "fixture": "open_deal_unpriced_item",
       "interference": "close_deal_before_write",
@@ -474,19 +474,14 @@
     {
       "id": "full_funnel_lead_to_order",
       "description": "The whole funnel, one agent run per step, each scored with its own task's checks: the harness creates its own lead at new (valued at the list total of an unpriced item), and the agent contacts, qualifies and converts it (the convert names the deal it made), moves that deal through qualification, proposal and negotiation, and quotes the item on it, which with the BOM price redacted drafts an unpriced quotation and submits it for margin approval. This seat can't approve margin, and a quote taken back out of approval can't be sent (revise_quote leaves approval_status pending_approval, live 2026-10-22), so the harness stands in for the person who can price it: their own quotation for the item on the deal at list price (set-up only), sent, with the agent's left waiting for approval. The agent then orders that quotation as accepted by the customer, and the conversion wins the deal (N483). funnel_linked checks the chain: one lead, converted into exactly that deal; on it, the agent's quotation still pending_approval and the person's converted, nothing else; one sales order from it on that deal, which is closed_won. The first failing step stops the funnel. permanent_records: the order can't be removed (clean-up labels it 'T6 TEST - not an order').",
-      "requires_llm": false,
+      "requires_llm": true,
       "requires_write": true,
       "permanent_records": true,
       "fixture": "funnel_lead",
       "steps": [
         {
           "name": "contact",
-          "argv": [
-            "--advance-lead",
-            "{lead_id}",
-            "--to-status",
-            "contacted"
-          ],
+          "argv": ["We've spoken to lead {lead_id}. Mark it as contacted."],
           "extra_writes": [
             "Lead.contact"
           ],
@@ -508,12 +503,7 @@
         },
         {
           "name": "qualify",
-          "argv": [
-            "--advance-lead",
-            "{lead_id}",
-            "--to-status",
-            "qualified"
-          ],
+          "argv": ["Lead {lead_id} is a good fit. Mark it as qualified."],
           "extra_writes": [
             "Lead.qualify"
           ],
@@ -535,12 +525,7 @@
         },
         {
           "name": "convert",
-          "argv": [
-            "--advance-lead",
-            "{lead_id}",
-            "--to-status",
-            "converted"
-          ],
+          "argv": ["Lead {lead_id} is qualified. Convert it into a deal."],
           "extra_writes": [
             "Lead.convert"
           ],
@@ -567,12 +552,7 @@
         },
         {
           "name": "deal_qualification",
-          "argv": [
-            "--advance",
-            "{deal_id}",
-            "--to-stage",
-            "qualification"
-          ],
+          "argv": ["Move deal {deal_id} forward to qualification."],
           "extra_writes": [
             "Deal.qualify"
           ],
@@ -594,12 +574,7 @@
         },
         {
           "name": "deal_proposal",
-          "argv": [
-            "--advance",
-            "{deal_id}",
-            "--to-stage",
-            "proposal"
-          ],
+          "argv": ["Move deal {deal_id} forward to proposal."],
           "extra_writes": [
             "Deal.send_proposal"
           ],
@@ -621,12 +596,7 @@
         },
         {
           "name": "deal_negotiation",
-          "argv": [
-            "--advance",
-            "{deal_id}",
-            "--to-stage",
-            "negotiation"
-          ],
+          "argv": ["Move deal {deal_id} forward to negotiation."],
           "extra_writes": [
             "Deal.negotiate"
           ],
@@ -648,16 +618,7 @@
         },
         {
           "name": "quote",
-          "argv": [
-            "--asks",
-            "quote",
-            "--item",
-            "{item_id}",
-            "--qty",
-            "500",
-            "--deal",
-            "{deal_id}"
-          ],
+          "argv": ["Quote 500 units of {item_id} on deal {deal_id}."],
           "extra_writes": [
             "Quotation.create",
             "Quotation.submit_for_margin_approval"
@@ -703,11 +664,7 @@
         },
         {
           "name": "order",
-          "argv": [
-            "--order-quote",
-            "{quotation_number}",
-            "--customer-accepted"
-          ],
+          "argv": ["The customer has accepted quotation {quotation_number}. Make the sales order."],
           "extra_writes": [
             "Quotation.accept.",
             "Quotation.convert_to_order.accepted."

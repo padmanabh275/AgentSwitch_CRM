@@ -117,6 +117,11 @@ def verify_claims(text: str, finding: dict) -> dict:
             missing.append("the quote was escalated")
     elif quote.get("outcome") == "quoted" and not _mentions_amount(text, quote.get("total_price") or 0):
         missing.append(f"quote total {quote.get('total_price'):,.2f}")
+    # Live 2026-10-23: "Give me a quote for 500 units" was refused (no item),
+    # but the answer only asked "which item?", which reads as a quote on its way.
+    elif quote.get("outcome") == "refused" and not REFUSAL_RE.search(text):
+        missing.append("that you can't quote this, in so many words (\"I can't quote ...\"), and why: "
+                       + str(quote.get("reason") or "no reason given"))
 
     quotation = finding.get("quotation") or {}
     if quotation.get("outcome") == "sent" and quotation.get("number") \

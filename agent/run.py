@@ -7,7 +7,8 @@ Three ways in:
                    and any out-of-scope parts go to the task graph, anything
                    else in scope goes to the chat loop.
   flags only       the graph, with the asks/item/qty given explicitly — no
-                   LLM classification, so it's the reproducible path.
+                   LLM classification. For debugging only: harness tasks
+                   always ask in plain English, so the classifier is graded.
   --chat "..."     straight to the LLM tool loop (llm/chat_loop.py).
 
 In the graph the finding is computed in code (graph/, domain/); the LLM
@@ -244,7 +245,8 @@ def main() -> int:
         run.intent = intent
         run.task_id = "chat" if intent["route"] == "chat" else "pipeline_review"
         plan_args = {**{k: intent[k] for k in ("asks", "item_ref", "qty", "out_of_scope", "other")},
-                     "deal_id": args.deal, "advance": intent.get("advance"),
+                     "deal_id": args.deal, "quote_deal_ref": intent.get("quote_deal_ref"),
+                     "advance": intent.get("advance"),
                      "advance_lead": intent.get("advance_lead"),
                      "accept_quote": intent.get("accept_quote")}
 

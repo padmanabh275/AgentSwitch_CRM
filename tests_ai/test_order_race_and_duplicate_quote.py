@@ -138,7 +138,7 @@ def test_the_order_race_task_is_valid_and_permanent():
     validate_task(task)
     assert task["permanent_records"] and task["interference"] == "close_deal_before_order"
     assert not task.get("extra_writes")   # any accept or conversion is a policy failure
-    assert task["argv"] == ["--order-quote", "{quotation_number}", "--customer-accepted"]
+    assert task["argv"] == ["The customer has accepted quotation {quotation_number}. Make the sales order."]
 
 
 SENT = {"id": QID, "number": "QTN-1", "status": "sent"}

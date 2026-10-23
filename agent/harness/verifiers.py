@@ -1695,7 +1695,16 @@ def validate_task(task: dict) -> None:
         bad = sorted(set(override) - INSTANCE_OVERRIDABLE)
         if bad:
             raise ValueError(f"task {tid}: by_instance.{instance} can't override {bad}")
-        validate_task({"id": f"{tid}@{instance}", **override})
+        validate_task({"id": f"{tid}@{instance}", "requires_llm": task.get("requires_llm"), **override})
+    # The request is what a person would type. A task handing the agent flags
+    # (--asks, --item, --deal ...) skips the classifier, so a misread request
+    # would pass every check.
+    argv = task.get("argv")
+    if argv is not None and (len(argv) != 1 or not isinstance(argv[0], str)
+                             or not argv[0].strip() or argv[0].lstrip().startswith("-")):
+        raise ValueError(f"task {tid}: argv must be one plain-English request, not flags: {argv!r}")
+    if argv is not None and not task.get("requires_llm"):
+        raise ValueError(f"task {tid}: a plain-English request is classified by the LLM, so requires_llm")
     for spec in task.get("verifiers") or []:
         if spec.get("name") not in VERIFIERS:
             raise ValueError(f"task {tid}: unknown verifier {spec.get('name')!r}")

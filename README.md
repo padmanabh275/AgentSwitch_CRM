@@ -28,8 +28,9 @@ means not a sales agent's job *or* an action the agent has no tool for (email,
 follow-up sequences, invoices, record changes). A reply with no JSON is asked
 once more with a bigger budget; if that fails too, the question goes to the
 chat loop instead of ending the run, and the failure stays on the run record.
-Running with flags only skips the classification, which makes it the
-reproducible path for grading.
+Running with flags only skips the classification. That is for debugging:
+harness tasks always ask in plain English, so the classification is graded
+too (`validate_task` refuses a task whose `argv` is flags).
 
 | Flag | Effect |
 |---|---|
@@ -213,7 +214,7 @@ the agent's prose, and every run written to disk before anything is scored.
 ```bash
 cd agent
 uv run python -m harness.runner                 # all tasks, every run --dry-run
-uv run python -m harness.runner --tasks at_risk,quote_no_bom --skip-llm
+uv run python -m harness.runner --tasks at_risk,quote_no_bom
 uv run python -m harness.runner --write --allow-permanent --tasks order_from_accepted_quote   # makes a sales order the seat can't delete
 uv run python -m harness.runner --write --allow-permanent --tasks full_funnel_lead_to_order   # lead to order, one agent run per step
 uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
@@ -233,10 +234,12 @@ and records the batch in `runs/batches/<batch_id>/manifest.json`. `score.py`
 then reads only those files and writes `score.json` per run and `report.md`
 per batch. A scorer fix is applied by re-scoring saved runs, not by paying
 for new live ones. `--write` lets runs write to the platform (off by
-default); tasks needing the LLM are skipped when the gateway is down.
+default). Every task needs the LLM to classify its request, so with the
+gateway down (or `--skip-llm`) every task is skipped.
 
 **Task set** (`agent/harness/tasks.json`, hand-editable): each task has an
-`id`, the `argv` passed to `run.py`, `requires_llm`, `expect` (per-section
+`id`, the `argv` passed to `run.py` (one plain-English request, as a person
+would type it; `requires_llm` is always true), `expect` (per-section
 outcomes, `refusals_min`, or `chat_tools` outcomes) and `verifiers`. It covers
 closing this month, at risk, the composite question (`composite_bom_hidden`:
 the BOM price is redacted for this seat; the quote outcome isn't pinned, so
