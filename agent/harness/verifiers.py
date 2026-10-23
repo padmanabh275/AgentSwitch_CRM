@@ -1571,6 +1571,8 @@ INSTANCE_OVERRIDABLE = {"description", "argv", "expect", "verifiers"}
 
 def validate_task(task: dict) -> None:
     from harness.fixtures import FIXTURE_KINDS, INTERFERENCE_KINDS
+    from harness.task_keys import check_task_keys
+    check_task_keys(task)   # a misspelt key would otherwise drop its check silently
     tid = task.get("id")
     for instance, override in (task.get("by_instance") or {}).items():
         bad = sorted(set(override) - INSTANCE_OVERRIDABLE)
