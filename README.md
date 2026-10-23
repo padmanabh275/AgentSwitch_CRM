@@ -219,6 +219,7 @@ uv run python -m harness.runner --write --allow-permanent --tasks order_from_acc
 uv run python -m harness.runner --write --allow-permanent --tasks full_funnel_lead_to_order   # lead to order, one agent run per step
 uv run python -m harness.score ../runs/batches/<batch_id>   # files only, re-runnable
 uv run python -m harness.error_guidance          # do wrong-state errors name only steps we have tools for? (N484)
+uv run python -m harness.calibrate ../runs/batches/<batch_id>   # plant faults in passing runs; the scorer must fail each
 ```
 
 **Run, then score, never both at once.** For each task the runner:
@@ -386,9 +387,13 @@ tests/              hand-written tests go here
 
 ```bash
 uv run pytest
+uv run python scripts/mutation_probe.py   # plant bugs in a temp copy; a test must catch each
 ```
 
-pytest is configured in `pyproject.toml` (`testpaths = tests`, `agent/` on the
+What the tests and the harness catch, checked by breaking things on purpose:
+[`docs/TEST_EVIDENCE.md`](docs/TEST_EVIDENCE.md).
+
+pytest is configured in `pyproject.toml` (`testpaths = tests, tests_ai`, `agent/` on the
 import path, so `from domain import deals` works). The graded tests are written
 by hand, not by AI. The parts easiest to test without the network:
 
