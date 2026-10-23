@@ -68,6 +68,10 @@ def file_escalation(client: MCPClient, session_id: str | None, reason: str,
     if party_id:
         args["party_id"] = party_id
     if dry_run:
+        # A dry run reports what the real run would do, and without the tool
+        # that is a refusal, not an escalation (tools/list is a read).
+        if "AgentEscalation.create" not in {t.get("name") for t in client.list_tools()}:
+            return {**_unavailable(args), "dry_run": True}
         return {"outcome": "escalated", "escalation_id": None, "dry_run": True,
                 "would_file": args}
     try:
@@ -77,7 +81,11 @@ def file_escalation(client: MCPClient, session_id: str | None, reason: str,
         # paged, so say so rather than fail the branch.
         if e.code != "tool_not_available":
             raise
-        return {"outcome": "refused", "escalation_id": None, "would_file": args,
-                "reason": "can't escalate: AgentEscalation.create isn't available to this "
-                          "seat, so nobody was asked to price it"}
+        return _unavailable(args)
     return _summary(created, reused=False)
+
+
+def _unavailable(args: dict) -> dict:
+    return {"outcome": "refused", "escalation_id": None, "would_file": args,
+            "reason": "can't escalate: AgentEscalation.create isn't available to this "
+                      "seat, so nobody was asked to price it"}

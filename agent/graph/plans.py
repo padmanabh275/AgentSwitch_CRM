@@ -50,12 +50,15 @@ NOT_HANDLED_REASON = ("outside this plan's three questions — ask it on its own
 def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | None = None,
                     out_of_scope: list[dict] | None = None,
                     other: str | None = None, deal_id: str | None = None,
+                    quote_deal_ref: str | None = None,
                     advance: dict | None = None, advance_lead: dict | None = None,
                     accept_quote: dict | None = None) -> list[TaskSpec]:
     """item_ref may be an id, code or name. qty None means "not stated":
     the quote is refused rather than assuming a quantity. deal_id makes the
     quote a Quotation on that deal (the planner adds the writes once the
     price is known); without it the quote is only a number in the finding.
+    quote_deal_ref is the same deal as a request names it (id or exact
+    title); it is used when deal_id isn't given.
     advance ({"deal_ref", "target_stage"}) moves that deal one stage forward;
     whether the step is allowed is decided in domain/deal_stage.py.
     advance_lead ({"lead_ref", "target_status"}) does the same for a lead
@@ -90,8 +93,9 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
             tasks.append(TaskSpec("price_lookup", "price_lookup",
                                   args={"item": "resolve_item", "qty": qty}, deps=["resolve_item"]))
             leaves += ["resolve_item", "price_lookup"]
-            if deal_id:
-                tasks.append(TaskSpec("get_deal", "get_deal", args={"deal_id": deal_id}))
+            if deal_id or quote_deal_ref:
+                tasks.append(TaskSpec("get_deal", "get_deal", args=(
+                    {"deal_id": deal_id} if deal_id else {"deal_ref": quote_deal_ref})))
                 leaves.append("get_deal")
 
     if advance:
@@ -121,7 +125,7 @@ def pipeline_review(asks: list[str], item_ref: str | None = None, qty: int | Non
     tasks.append(TaskSpec("build_finding", "build_finding", needs="done", deps=leaves,
                           args={"asks": list(asks), "sections": SECTION_SOURCES,
                                 "refusals": refusals, "not_handled": not_handled,
-                                "quotation_requested": bool(deal_id and "quote" in asks),
+                                "quotation_requested": bool((deal_id or quote_deal_ref) and "quote" in asks),
                                 "advance_requested": bool(advance),
                                 "advance_lead_requested": bool(advance_lead),
                                 "accept_quote_requested": bool(accept_quote)}))

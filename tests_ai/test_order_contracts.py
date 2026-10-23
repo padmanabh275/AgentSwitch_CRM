@@ -211,8 +211,8 @@ def test_the_new_tasks_are_valid():
     won, unpriced = TASKS["refuse_order_on_won_deal"], TASKS["refuse_order_from_unpriced_quote"]
     for task in (won, unpriced):
         validate_task(task)
-        assert task["argv"] == ["--order-quote", "{quotation_number}", "--customer-accepted"]
-        assert not task.get("extra_writes") and not task.get("requires_llm")
+        assert task["argv"] == ["The customer has accepted quotation {quotation_number}. Make the sales order."]
+        assert not task.get("extra_writes") and task.get("requires_llm")
     assert won["permanent_records"] and not unpriced.get("permanent_records")
     assert "quote_orders:{first_quotation_id}" in observations_for(won)
 

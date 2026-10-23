@@ -9,9 +9,8 @@ always ends with an answer, and `source` says which one it is.
 """
 from __future__ import annotations
 
-import json
-
 from graph.outcome import ANSWERED, NodeOutcome
+from llm import untrusted
 from llm.verify import feedback, verify_claims
 from transport.llm_client import LLMError, call_llm
 
@@ -33,6 +32,9 @@ whether it was answered, escalated, refused, not requested, or failed, and why.
 deals have no close date (open_without_close_date_ids) — they can't be judged.
 - For a quoted quote, give the unit BOM price, quantity and total, and say \
 it's before tax and discounts.
+- For a refused quote, say plainly that you can't quote it ("I can't quote \
+...") and why, in the words of its reason. Only then may you ask for what's \
+missing (e.g. which item); never answer with just a question.
 - For an escalated quote, say why there's no BOM price, in the words of its reason. If bom_price_redacted \
 is true, the price exists but is hidden from this seat: never say it isn't set. Say that no price was \
 invented, give the escalation number \
@@ -58,7 +60,9 @@ run and nothing was written.
 - If accept_quote is present and not "not_requested": for "ordered", give the \
 quotation number, the sales order number (order_number) and that it was made \
 from the accepted quotation, and say what the deal is now (deal_stage_after: \
-the platform marks it closed_won when the order is made; you never did); for \
+the platform marks it closed_won when the order is made; you never did; if \
+it is anything else, say the deal is still at that stage, and if deal_value is \
+0, that the platform doesn't mark a deal won without a value); for \
 "refused", say no order was made and why, in the words of its reason; for \
 "would_order", say it was a dry run and nothing was written.
 - For an "unpriced" quote, say why there's no BOM price, in the words of its reason (if \
@@ -66,7 +70,9 @@ bom_price_redacted is true it's hidden from this seat, not unset), and that no p
 - If there are refusals, say plainly that you can't do each one ("I can't ...") and why; \
 don't just point elsewhere. If not_handled is \
 set, say that part wasn't answered and why.
-- Be direct and concise."""
+- Be direct and concise.
+
+""" + untrusted.NOTE
 
 
 def _fmt_inr(v) -> str:
@@ -204,8 +210,10 @@ def narrate(query: str, finding: dict) -> NodeOutcome:
     # The facts verify_claims will require, stated up front: without this the
     # first answer usually omits one and costs a rewrite.
     required = verify_claims("", finding)["missing"]
-    must = ("\n\nYour answer must state: " + "; ".join(required) + ".") if required else ""
-    user = f"Question: {query}\n\nFINDING:\n{json.dumps(finding, indent=1, default=str)}{must}"
+    # Built from the finding, so a title or reason repeated here is fenced too.
+    must = (untrusted.fence_within("\n\nYour answer must state: " + "; ".join(required) + ".", finding)
+            if required else "")
+    user = f"Question: {query}\n\nFINDING:\n{untrusted.for_model(finding, indent=1)}{must}"
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user}]
     attempts: list[dict] = []
@@ -219,7 +227,7 @@ def narrate(query: str, finding: dict) -> NodeOutcome:
             resp = call_llm(messages, max_tokens=1500)
         except LLMError as e:
             return fallback(str(e))
-        text = (resp.get("text") or "").strip()
+        text = untrusted.strip_markers(resp.get("text") or "").strip()
         stop = resp.get("stop_reason")
         if not text or stop == "max_tokens":
             return fallback(f"llm answer unusable (stop_reason={stop!r}, {len(text)} chars)")
@@ -230,5 +238,5 @@ def narrate(query: str, finding: dict) -> NodeOutcome:
                                                "verification": check, "attempts": attempts,
                                                "template": template})
         messages += [{"role": "assistant", "content": text},
-                     {"role": "user", "content": feedback(check)}]
+                     {"role": "user", "content": untrusted.fence_within(feedback(check), finding)}]
     return fallback(f"llm answer failed verification {MAX_ATTEMPTS} times")

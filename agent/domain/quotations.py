@@ -37,6 +37,7 @@ have landed server-side.
 """
 from __future__ import annotations
 
+from domain.deal_stage import UUID_RE, find_deal
 from domain.deals import OPEN_STAGES
 from domain.escalation import T6_PREFIX
 from domain.records import get_deal
@@ -91,6 +92,18 @@ def _duplicate_refusal(client: MCPClient, deal: dict, item_id: str, base: dict) 
             "reason": (f"not drafted: quotation {existing.get('number') or existing['id']} for this "
                        f"item is already {existing['status']} on deal {deal['title']!r}; a second one "
                        "would ask for the same thing twice")}
+
+
+def read_open_deal_ref(client: MCPClient, deal_ref: str) -> dict:
+    """read_open_deal for a deal as a request names it: an id, or an exact
+    title that must match exactly one deal."""
+    ref = (deal_ref or "").strip()
+    if UUID_RE.fullmatch(ref):
+        return read_open_deal(client, ref)
+    found, why = find_deal(client, ref)
+    if not found:
+        return {"outcome": "refused", "deal_id": None, "deal_ref": ref, "reason": why}
+    return read_open_deal(client, found["id"])
 
 
 def read_open_deal(client: MCPClient, deal_id: str) -> dict:

@@ -11,8 +11,14 @@ import datetime as dt
 import pytest
 
 from domain import deals, escalation, items, records
-from harness.verifiers import _expected_quote, _obs_item_ref
+from harness.verifiers import _expected_quote, _obs_item_ref, _without_escalation_tool
 from transport.mcp_client import NOT_FOUND, MCPToolError
+
+
+def _never(args):
+    """In the catalogue, but a dry run must never call it."""
+    raise AssertionError(f"a dry run called AgentEscalation.create {args}")
+
 
 TODAY = dt.date(2026, 10, 5)
 REDACTED = ["purchase_rate", "standard_rate", "standard_rate_updated_at"]
@@ -83,7 +89,8 @@ def esc_by_subject(args):
 @pytest.fixture
 def platform(fake_client):
     return fake_client({"Item.list": live_search, "Item.get": live_get,
-                        "AgentEscalation.list": esc_by_subject})
+                        "AgentEscalation.list": esc_by_subject,
+                        "AgentEscalation.create": _never})
 
 
 # --- items: resolving live references ----------------------------------------
@@ -180,6 +187,18 @@ def test_dry_run_quote_escalates_without_filing(platform):
     assert out["dry_run"] is True and out["escalation_id"] is None
     assert out["would_file"]["subject"] == f"T6-BOM quote for 500x {BENCH_VICE_100['id']}"
     assert "AgentEscalation.create" not in platform.tools_called()
+
+
+def test_dry_run_quote_without_the_escalation_tool_matches_the_verifier(fake_client):
+    # The catalogue as it is since 2026-10-15: no AgentEscalation.create.
+    # The dry run and the verifier must both call it a refusal.
+    client = fake_client({"Item.list": live_search, "Item.get": live_get,
+                          "AgentEscalation.list": esc_by_subject})
+    out = items.attempt_quote(client, "s1", "ST-VICE-150", 500, dry_run=True)
+    want, _, why = _expected_quote(_obs_item_ref(client, "ST-VICE-150"), "ST-VICE-150", 500)
+    want, _ = _without_escalation_tool(want, why, can_file=False)
+    assert out["outcome"] == want == "refused"
+    assert out["dry_run"] is True and "AgentEscalation.create" not in client.tools_called()
 
 
 def test_other_teams_withdrawn_escalations_are_not_reused(fake_client):

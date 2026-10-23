@@ -96,3 +96,26 @@ def test_a_plain_answer_is_still_not_a_refusal():
     ans = "Ravi will earn a good commission on the deals closing this month."
     assert check_refusal_answer(files(task, ans, finding={}), {})[0].status == "fail"
 
+
+
+# --- a refused quote must be said as a refusal (refuse_quote_no_item, live 2026-10-23) ---
+
+NO_ITEM = {"quote": {"outcome": "refused", "requested_qty": 500, "item_id": None,
+                     "reason": "can't quote without knowing which item"}}
+ASKED_BACK = ("I would be happy to provide a quote for 500 units. However, I need to know which "
+              "specific item you are interested in. Could you please provide the item name or ID?")
+
+
+def test_a_refused_quote_answered_with_only_a_question_is_missing_the_refusal():
+    from llm.verify import verify_claims
+    check = verify_claims(ASKED_BACK, NO_ITEM)
+    assert not check["ok"] and any("can't quote" in m and "which item" in m for m in check["missing"])
+
+
+def test_a_refused_quote_said_as_one_passes_both_checks():
+    from llm.verify import verify_claims
+    text = "I can't quote this: I don't know which item you mean. Which item should I quote?"
+    assert verify_claims(text, NO_ITEM)["ok"]
+    task = {"id": "refuse_quote_no_item", "argv": ["Give me a quote for 500 units."],
+            "expect": {"sections": {"quote": "refused"}}}
+    assert statuses(check_refusal_answer(files(task, text, finding=NO_ITEM), {}))["stated"] == "pass"

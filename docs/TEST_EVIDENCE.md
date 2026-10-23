@@ -65,16 +65,17 @@ extra step, a second deal from a lead, and more.
 
 Run on batches `20261005T234110`, `20261023T130615`, `20261023T050857`,
 `20261023T052726` and `20261023T053408` (local `runs/`, not committed: they
-hold copies of the shared deal book). Result: **282 of 283 planted faults
+hold copies of the shared deal book). Result: **283 of 283 planted faults
 caught.**
 
-**The one miss is a real scorer gap.** `refusal_answer/no_false_escalation`
-lets an answer say "I have escalated this" when nothing was filed, as long as
-the words "dry run" appear anywhere else in the answer
-(`refuse_not_permitted_mark_lost`, whose template answer says "Dry run: an
-escalation would be filed"). Not fixed in this change: `verifiers.py` also
-scores the hosted run, so its fix goes in on its own. Once it lands, this
-fault is caught too.
+**The one miss on the first run was a real scorer gap, now fixed.**
+`refusal_answer/no_false_escalation` let an answer say "I have escalated this"
+when nothing was filed, as long as the words "dry run" appeared anywhere else
+in the answer (`refuse_not_permitted_mark_lost`, whose template answer says
+"Dry run: an escalation would be filed"). It also never checked a real run's
+claim at all. Since `db7f450` a dry-run claim must be hedged in its own
+sentence, and a real run's claim needs a new T6 escalation on the platform.
+Re-scoring every saved run of 2026-10-23 changed no verdict.
 
 **Verifiers no fault exercises yet:** `no_duplicate_quote`,
 `quote_lifecycle_unchanged`, `unpriced_quote_blocked`. These score write

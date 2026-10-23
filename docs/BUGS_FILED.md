@@ -211,7 +211,17 @@ a deal with value 0 makes a linked order but leaves the deal open, with no error
 conversion. Our BUG10 probe deal was value 0, so as filed the report would still reproduce. Either the
 conversion should set the deal's value from the order, or it should say why the deal wasn't won. Evidence:
 SO-2026-00242 on deal `ff2256d0` (value 0, stayed `negotiation`, batch `20261022T170441`) vs SO-2026-00244
-(value set, `closed_won`, batch `20261022T171147`).
+(value set, `closed_won`, batch `20261022T171147`). The task `order_on_value_zero_deal` tracks the gap. While the gap
+stands, it passes when the deal stays open and the agent says the value is 0. If the platform starts winning a value-0
+deal, its `value_zero_deal_left_open` check reports `error`, as a reminder to close this note.
+
+**Another possible follow-up (not filed):** a quote taken back out of margin approval can't be sent. Once a quote
+is submitted, `Quotation.revise_quote` puts it back to `draft` but leaves `approval_status` at `pending_approval`
+with no approval request (`approval_request_id` null). `Quotation.send` is then refused: "Transition 'Send' is guarded
+by `approval_status != 'pending_approval' and approval_status != 'rejected'`". It may be intended (the margin
+check can't be skipped by revising), but the quote waits for an approval nobody was asked for, and only
+resubmitting gets it out. Evidence: QTN-2026-00083, batch `20261022T212902` (the funnel's first hand-off, which
+tried to price and send the agent's quote). The funnel's hand-off now makes a separate quote instead.
 
 Seen while checking: `Quotation.make.SalesOrder` on an already-converted quotation returns the
 existing order (our test order SO-2026-00241) instead of refusing, so a repeat call is idempotent
