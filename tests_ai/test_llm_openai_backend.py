@@ -195,3 +195,26 @@ def test_401_is_not_retried(server):
     with pytest.raises(LLMError, match="401"):
         call_llm([{"role": "user", "content": "q"}])
     assert len(server["requests"]) == 1
+
+
+# --- a hung model must not outlast the hosted task (rehearsal 2026-10-23) --------
+
+@pytest.mark.parametrize("hang", [TimeoutError("timed out"),
+                                  urllib.error.URLError(TimeoutError("timed out"))])
+def test_a_timeout_is_not_retried(server, hang):
+    server["replies"] += [hang, reply("too late")]
+    with pytest.raises(LLMError, match="timed out after"):
+        call_llm([{"role": "user", "content": "q"}])
+    assert len(server["requests"]) == 1
+
+
+def test_each_attempt_waits_at_most_the_llm_timeout(monkeypatch, server):
+    waits = []
+    real = llm_client.urllib.request.urlopen
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen",
+                        lambda req, timeout=None: waits.append(timeout) or real(req, timeout))
+    server["replies"].append(reply("ok"))
+    call_llm([{"role": "user", "content": "q"}])
+    assert waits == [llm_client.LLM_TIMEOUT_S]
+    # classify + narrate, each at the limit, plus the work, inside the 180s task kill
+    assert 2 * llm_client.LLM_TIMEOUT_S + 30 < 180

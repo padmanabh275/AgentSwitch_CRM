@@ -36,6 +36,14 @@ GLC_PROVIDER = os.environ.get("GLC_PROVIDER", "gemini")
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"   # what the openai SDK assumes
 DEFAULT_OPENAI_MODEL = "agentswitch-default"             # the platform example's fallback
 TRANSIENT_RETRIES = 2
+# Per attempt. The hosted runner kills a task after 180s, and a run makes up
+# to two calls that matter (classify, narrate), each with a fallback (chat
+# loop, template). At 120s plus two retries on a timeout, one hung call could
+# outlast the task (rehearsal 2026-10-23: narrate waited 120s, the task took
+# 150s). A timeout isn't retried: a model that hung once is likely to again,
+# and the caller's fallback is the faster way out. Fast errors (429, 5xx,
+# refused connections) still are.
+LLM_TIMEOUT_S = 60
 _FINISH = {"length": "max_tokens", "tool_calls": "tool_use", "function_call": "tool_use",
            "stop": "end_turn", "content_filter": "refusal"}
 
@@ -108,7 +116,7 @@ def _call_glc(messages, tools, tool_choice, max_tokens, temperature, provider,
         headers={"Content-Type": "application/json"},
     )
     try:
-        raw = urllib.request.urlopen(req, timeout=120).read()
+        raw = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S).read()
     except urllib.error.HTTPError as e:
         raise LLMError(f"glc_v5 HTTP {e.code}: {e.read()[:500]!r}")
     except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -159,7 +167,7 @@ def _post_openai(cfg: dict, payload: dict) -> dict:
     for attempt in range(TRANSIENT_RETRIES + 1):
         req = urllib.request.Request(url, data=body, method="POST", headers=headers)
         try:
-            raw = urllib.request.urlopen(req, timeout=120).read()
+            raw = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S).read()
             break
         except urllib.error.HTTPError as e:
             detail = e.read()[:500]
@@ -172,6 +180,8 @@ def _post_openai(cfg: dict, payload: dict) -> dict:
                 continue
             raise LLMError(f"model HTTP {e.code}: {detail!r}")
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if _timed_out(e):
+                raise LLMError(f"model timed out after {LLM_TIMEOUT_S}s at {cfg['base_url']} ({e})")
             if attempt < TRANSIENT_RETRIES:
                 time.sleep(2 * (attempt + 1))
                 continue
@@ -180,6 +190,11 @@ def _post_openai(cfg: dict, payload: dict) -> dict:
         return json.loads(raw)
     except ValueError:
         raise LLMError(f"model returned non-JSON: {raw[:200]!r}")
+
+
+def _timed_out(e: Exception) -> bool:
+    """A read or connect timeout: TimeoutError itself, or wrapped in URLError."""
+    return isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError)
 
 
 def to_openai_tools(tools: list[dict]) -> list[dict]:
