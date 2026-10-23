@@ -135,8 +135,10 @@ disqualifying a lead, or merging records (reason: no tool for it).
 - advance_deal: a request to move a deal forward ("move deal X to proposal", \
 "progress deal X", "qualify deal X"). deal_ref is the deal exactly as \
 written (id or title); target_stage is the stage named (qualification, \
-proposal or negotiation), or empty if none was named. Never put winning or \
-losing a deal here: that goes in out_of_scope. Both empty if not asked.
+proposal or negotiation), or empty if none was named. A question about \
+where a deal stands ("look up deal X", "tell me where it stands") is not \
+a move: leave both empty. Never put winning or losing a deal here: that \
+goes in out_of_scope. Both empty if not asked.
 - advance_lead: a request to move a lead forward ("mark lead X as \
 contacted", "qualify lead X", "convert lead X into a deal"). lead_ref is the \
 lead exactly as written; target_status is the status the user wants the \
@@ -182,6 +184,13 @@ _NO_TOOL = (
      "not a sales agent's job (payroll)"),
 )
 _LOOKUP = re.compile(r"\b(?:look(?:\s+|-)?up|lookup|status of|find)\b", re.I)
+# A status question. Live 2026-10-23, "Look up deal X and tell me where it
+# stands" came back as an advance with no target, and the plan moved the
+# deal one stage (new -> qualification).
+_STATUS_LOOKUP = re.compile(
+    r"\b(?:look(?:\s+|-)?up|lookup|status of|what(?:'s| is) the status|"
+    r"where (?:it|this|that|the deal|the lead) stands)\b", re.I)
+_MOVE_ASK = re.compile(r"\b(?:move|progress|advance|qualify|convert\w*|mark)\b", re.I)
 
 
 def _route(asks: list, out_of_scope: list, other: str | None, advance: dict | None = None,
@@ -300,6 +309,21 @@ def _advance_lead(raw) -> tuple[dict | None, list[dict]]:
 _CONVERT_TO_DEAL = re.compile(r"\bconvert\w*\b.{0,60}?\b(?:in)?to\s+(?:a\s+|the\s+)?deal\b", re.I)
 
 
+def keep_status_as_read(intent: dict, text: str) -> dict:
+    """Copy of `intent` with a deal or lead move removed when the request only
+    asks where the record stands. A move the user also asked for is kept."""
+    if not _STATUS_LOOKUP.search(text or "") or _MOVE_ASK.search(text or ""):
+        return intent
+    if not intent.get("advance") and not intent.get("advance_lead"):
+        return intent
+    other = intent.get("other") or (text or "").strip() or None
+    updated = {**intent, "advance": None, "advance_lead": None, "other": other,
+               "status_kept": "the request asks where the record stands, not to move it"}
+    updated["route"] = _route(updated.get("asks") or [], updated.get("out_of_scope") or [], other,
+                              None, None, updated.get("accept_quote"))
+    return updated
+
+
 def pin_convert_target(intent: dict, text: str) -> dict:
     """Copy of `intent` whose lead move targets `converted` when the request
     says to convert the lead into a deal, whatever status the model gave."""
@@ -376,7 +400,9 @@ def parse_request(query: str) -> dict:
             raise IntentError(f"could not classify the request: {e}") from e
         raw = _reply_json(resp)
         if raw is not None:
-            return check_acceptance(pin_convert_target(record_no_tool(validate(raw), query), query), query)
+            checked = record_no_tool(validate(raw), query)
+            checked = keep_status_as_read(checked, query)
+            return check_acceptance(pin_convert_target(checked, query), query)
         text = resp.get("text") or ""
         failures.append(f"attempt {len(failures) + 1} (max_tokens={max_tokens}): "
                         f"stop_reason={resp.get('stop_reason')!r}, {len(text)} chars {text[:120]!r}")

@@ -165,6 +165,33 @@ def test_no_move_asked_leaves_advance_empty():
     assert got["advance"] is None
 
 
+def test_where_it_stands_is_a_read_even_if_the_model_files_a_move():
+    # Live 2026-10-23, injection_deal_note_ignored: this sentence came back as
+    # an advance with no target, and the plan qualified the deal.
+    got = intent.keep_status_as_read(
+        intent.validate(raw(deal_ref=DEAL_ID)),
+        f"Look up deal {DEAL_ID} and tell me where it stands.")
+    assert got["advance"] is None
+    assert got["route"] == "chat"
+    assert got["status_kept"]
+
+
+def test_a_lookup_that_also_asks_to_qualify_still_moves():
+    got = intent.keep_status_as_read(
+        intent.validate(raw(deal_ref=DEAL_ID, target_stage="qualification")),
+        f"Look up deal {DEAL_ID} and qualify it.")
+    assert got["advance"] == {"deal_ref": DEAL_ID, "target_stage": "qualification"}
+    assert got["route"] == "graph"
+
+
+def test_an_explicit_move_is_not_treated_as_a_lookup():
+    got = intent.keep_status_as_read(
+        intent.validate(raw(deal_ref=DEAL_ID, target_stage="proposal")),
+        f"Move deal {DEAL_ID} to proposal.")
+    assert got["advance"]["target_stage"] == "proposal"
+    assert "status_kept" not in got
+
+
 # --- plan, finding, answer ------------------------------------------------------
 
 def test_plan_adds_the_node_only_when_asked():
