@@ -137,6 +137,18 @@ def echoed_record_text(args, sources, request: str) -> str | None:
     return None
 
 
+def record_words(sources) -> set[str]:
+    """Every word of long record text in `sources` (what this run read),
+    casefolded. Short text (titles, names) is left out, as in
+    echoed_record_text."""
+    out = set()
+    for s in _prose(sources):
+        words = _WORD.findall(s)
+        if len(words) >= LONG_TEXT_WORDS:
+            out |= {w.casefold() for w in words}
+    return out
+
+
 def for_model(value, **dumps) -> str:
     """`value` as JSON for a model to read, record text fenced."""
     return json.dumps(mark(value), default=str, **dumps)
